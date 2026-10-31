@@ -1,0 +1,67 @@
+// Skills / Battle / VIP / Store (antes dentro do inventario): parte propria do
+// painel, que pode ir para qualquer coluna e em qualquer ordem (como no Miracle).
+Classic74PanelButton < Button
+  size: 43 20
+  font: cipsoftFont
+  text-offset: 0 1
+  color: #dfdfdf
+
+Classic74BottomButton < Classic74PanelButton
+  size: 34 20
+
+PhantomMiniWindow
+  id: mainbottombuttons74
+  draggable: true
+  phantom: false
+  &moveOnlyToMain: false
+  &anyPanel: true
+  &panelHeight: 31
+  height: 31
+
+  // fileira centrada na coluna (34*3 + 43 + 2 + 2 + 4 = 153 px), 5 px de folga
+  UIWidget
+    id: row74
+    size: 153 20
+    anchors.top: parent.top
+    anchors.horizontalCenter: parent.horizontalCenter
+    margin-top: 5
+    phantom: true
+
+  Classic74BottomButton
+    id: skillsButton74
+    !text: tr('Skills')
+    anchors.left: row74.left
+    anchors.top: row74.top
+    @onClick: modules.game_skills.toggle()
+
+  Classic74BottomButton
+    id: battleButton74
+    !text: tr('Battle')
+    anchors.left: prev.right
+    anchors.top: prev.top
+    margin-left: 2
+    @onClick: modules.game_battle.toggle()
+
+  Classic74BottomButton
+    id: vipButton74
+    !text: tr('VIP')
+    anchors.left: prev.right
+    anchors.top: prev.top
+    margin-left: 2
+    @onClick: modules.game_viplist.toggle()
+
+  Button
+    id: storeButton74
+    !text: tr('Store')
+    size: 43 20
+    anchors.left: prev.right
+    anchors.top: prev.top
+    margin-left: 4
+    image-source: /images/options/blue_large
+    image-clip: 0 0 108 20
+    image-border: 3
+    color: #f2d98a
+    font: verdana-11px-antialised
+    $pressed:
+      image-clip: 0 20 108 20
+    @onClick: modules.client_classic74.openStore()

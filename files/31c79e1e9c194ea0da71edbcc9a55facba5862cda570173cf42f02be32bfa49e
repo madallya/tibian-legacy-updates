@@ -1,0 +1,59 @@
+// Janela para adicionar uma conta favorita.
+MainWindow
+  id: favoriteAccountAdd
+  !text: tr('Add Favorite Account')
+  size: 257 172
+  @onEscape: self:destroy()
+  @onEnter: modules.client_classic74.confirmAddFavorite()
+
+  Label
+    !text: tr('Email')
+    anchors.left: parent.left
+    anchors.top: parent.top
+    text-auto-resize: true
+
+  TextEdit
+    id: account
+    height: 20
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: prev.bottom
+    margin-top: 2
+
+  Label
+    !text: tr('Password')
+    anchors.left: parent.left
+    anchors.top: prev.bottom
+    margin-top: 7
+    text-auto-resize: true
+
+  PasswordTextEdit
+    id: password
+    height: 20
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: prev.bottom
+    margin-top: 2
+
+  HorizontalSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: okButton.top
+    margin-bottom: 8
+
+  Button
+    id: okButton
+    !text: tr('Ok')
+    width: 64
+    anchors.right: cancelButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    @onClick: modules.client_classic74.confirmAddFavorite()
+
+  Button
+    id: cancelButton
+    !text: tr('Cancel')
+    width: 64
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    @onClick: self:getParent():destroy()

@@ -1,0 +1,69 @@
+// Contas favoritas (Ctrl+F), como no cliente do Miracle.
+FavoriteAccountLabel < Label
+  height: 16
+  text-offset: 3 1
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #ffffff30
+    color: #ffffff
+
+MainWindow
+  id: favoriteAccounts
+  !text: tr('Favorite Accounts')
+  size: 316 276
+  @onEscape: modules.client_classic74.closeFavorites()
+  @onEnter: modules.client_classic74.loginFavorite()
+
+  TextList
+    id: accountList
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: separator.top
+    margin-bottom: 8
+    padding: 1
+    focusable: false
+    vertical-scrollbar: accountListScroll
+
+  VerticalScrollBar
+    id: accountListScroll
+    anchors.top: accountList.top
+    anchors.bottom: accountList.bottom
+    anchors.right: accountList.right
+    step: 16
+    pixels-scroll: true
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: loginButton.top
+    margin-bottom: 8
+
+  Button
+    id: loginButton
+    !text: tr('Login')
+    width: 86
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    enabled: false
+    @onClick: modules.client_classic74.loginFavorite()
+
+  Button
+    id: addButton
+    !text: tr('Add')
+    width: 60
+    anchors.right: removeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 4
+    @onClick: modules.client_classic74.addFavorite()
+
+  Button
+    id: removeButton
+    !text: tr('Remove')
+    width: 60
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    enabled: false
+    @onClick: modules.client_classic74.removeFavorite()

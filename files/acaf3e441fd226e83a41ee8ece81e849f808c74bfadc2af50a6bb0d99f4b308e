@@ -1,0 +1,1101 @@
+// Cyclopedia no estilo do cliente do Miracle (que é o módulo game_cyclopedia do
+// OTClient com outra pele): abas Bestiary, Charm e Achievements; grade de
+// criaturas 5 x 3; ficha com Total Kills em 3 barras, dificuldade, ocorrência,
+// resistências, Charm Selection, Location(s) e loot por raridade; rodapé com
+// ouro, pontos de charm e de achievements, "Bestiary Tracker" e "Close".
+
+// ---- peças ---------------------------------------------------------------------
+// aba: moldura de 1 px em relevo (claro em cima/esquerda, escuro embaixo/direita);
+// a ativa fica afundada. Cores medidas nas prints do Miracle.
+Cyclopedia74Tab < UIButton
+  height: 36
+  anchors.top: parent.top
+  anchors.left: prev.right
+  margin-left: -1
+  text-align: left
+  text-offset: 44 0
+  font: verdana-11px-monochrome
+  color: #dfdfdf
+  background-color: #3c3c3c
+  border-width: 1
+  border-color-top: #6c6c6c
+  border-color-left: #626262
+  border-color-bottom: #262626
+  border-color-right: #232323
+  $checked:
+    text-offset: 44 1
+    border-color-top: #262626
+    border-color-left: #232323
+    border-color-bottom: #656565
+    border-color-right: #666666
+  $hover !checked:
+    background-color: #414141
+
+  UIWidget
+    id: icon
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 1
+    size: 34 34
+    phantom: true
+
+// moldura de 1 px afundada (barras de Total Kills, painel do loot)
+Cyclopedia74Sunken < UIWidget
+  border-width: 1
+  border-color-top: #6d6d6d
+  border-color-left: #373737
+  border-color-bottom: #6d6d6d
+  border-color-right: #6f6f6f
+
+Cyclopedia74ProgressBackground < UIWidget
+  image-source: /images/ui/1pixel_down_frame
+  image-border: 5
+  padding: 1
+  UIWidget
+    image-source: /images/ui/backdrop-dark-grey
+    image-border: 5
+    anchors.fill: parent
+    phantom: true
+
+// cartão de criatura (grade 5 x 3)
+Cyclopedia74Creature < UIWidget
+  image-source: /images/ui/outfits/minipanel
+  image-border: 20
+  Label
+    id: Name
+    height: 20
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-left: 2
+    margin-right: 2
+    text-align: center
+    text-offset: 0 3
+    color: #919191
+  UIWidget
+    id: ClassBase
+    anchors.top: parent.top
+    anchors.horizontalCenter: parent.horizontalCenter
+    margin-top: 22
+    size: 64 64
+    image-source: /images/ui/2pixel_up_frame_borderimage
+    image-border: 10
+    $pressed:
+      image-source: /images/ui/2pixel_up_frame_borderimage_dark_reversed
+  UICreature
+    id: Sprite
+    anchors.fill: ClassBase
+    phantom: true
+  Label
+    id: KillsLabel
+    anchors.horizontalCenter: ClassBase.horizontalCenter
+    anchors.top: ClassBase.bottom
+    margin-top: 5
+    !text: tr('?')
+    text-auto-resize: true
+    color: #C1C1C1
+  UIWidget
+    id: Finalized
+    image-source: /game_cyclopedia74/images/checkmark-icon
+    anchors.horizontalCenter: ClassBase.horizontalCenter
+    anchors.top: ClassBase.bottom
+    margin-top: 5
+    visible: false
+
+// barra de resistência
+Cyclopedia74Resist < UIWidget
+  image-source: /game_cyclopedia74/images/bestiary/barra
+  size: 55 7
+  UIWidget
+    id: Fill
+    anchors.fill: parent
+    background-color: white
+    margin-left: 1
+    margin-bottom: 2
+    margin-top: 2
+    margin-right: 1
+    phantom: true
+  UIWidget
+    id: Border
+    anchors.fill: parent
+    image-source: /game_cyclopedia74/images/bestiary/barra
+    phantom: true
+
+Cyclopedia74ResistIcon < UIWidget
+  size: 9 9
+  anchors.top: prev.top
+  anchors.left: prev.right
+  margin-left: 5
+
+// item do loot
+// casa do loot: 32x32, moldura de 1 px em relevo e fundo transparente (Miracle)
+Cyclopedia74Item < UIItem
+  size: 32 32
+  border-width: 1
+  border-color-top: #6d6d6d
+  border-color-left: #6d6d6d
+  border-color-bottom: #282828
+  border-color-right: #282828
+  anchors.verticalCenter: parent.verticalCenter
+  virtual: true
+  $first:
+    anchors.left: parent.left
+  $!first:
+    anchors.left: prev.right
+    margin-left: 4
+  UIWidget
+    id: undefinedItem
+    image-source: /game_cyclopedia74/images/bestiary/undefined_item
+    anchors.fill: parent
+    margin: 1
+    visible: false
+  Label
+    id: Stackable
+    text-auto-resize: true
+    font: verdana-11px-rounded
+    anchors.bottom: parent.bottom
+    anchors.right: parent.right
+    color: #BFBFBF
+    margin-bottom: -1
+
+Cyclopedia74ItemGroup < UIWidget
+  height: 45
+  UIWidget
+    id: Items
+    anchors.fill: parent
+    margin-left: 108
+  Label
+    id: Title
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 5
+    !text: tr('Common') .. ':'
+    text-auto-resize: true
+
+// cartão de charm (aba Charm)
+Cyclopedia74CharmCard < UIButton
+  size: 145 100
+  image-source: /images/ui/outfits/minipanel
+  image-border: 20
+  $checked:
+    image-source: /images/ui/panel_flat
+    image-border: 10
+
+  Label
+    id: name
+    height: 20
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    text-align: center
+    text-offset: 0 3
+    color: #919191
+    phantom: true
+
+  UIWidget
+    id: frame
+    anchors.top: parent.top
+    anchors.left: parent.left
+    margin-top: 24
+    margin-left: 8
+    size: 40 40
+    image-source: /images/ui/2pixel_up_frame_borderimage
+    image-border: 10
+    phantom: true
+
+  UIWidget
+    id: icon
+    anchors.centerIn: frame
+    size: 22 22
+    phantom: true
+
+  UIWidget
+    id: creatureFrame
+    anchors.top: frame.top
+    anchors.left: frame.right
+    anchors.right: parent.right
+    anchors.bottom: cost.bottom
+    margin-left: 6
+    margin-right: 8
+    image-source: /images/ui/panel_flat
+    image-border: 5
+    phantom: true
+
+  Label
+    id: creature
+    anchors.fill: creatureFrame
+    color: #dfdfdf
+    text-align: center
+    text-wrap: true
+    phantom: true
+
+  UIWidget
+    id: costBase
+    anchors.top: frame.bottom
+    anchors.left: frame.left
+    margin-top: 4
+    size: 52 18
+    image-source: /images/ui/item
+    image-border: 10
+    phantom: true
+    UIWidget
+      id: costIcon
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 3
+      size: 12 12
+      image-source: /game_cyclopedia74/images/icon_charms
+      phantom: true
+  Label
+    id: cost
+    anchors.fill: costBase
+    margin-right: 16
+    color: #ff5c5c
+    text-align: right
+    phantom: true
+
+Cyclopedia74CharmName < UICheckBox
+  height: 14
+  color: #C0C0C0
+  background-color: #484848
+  text-offset: 3 0
+  $checked:
+    background-color: #585858
+
+// ---- janela -----------------------------------------------------------------
+MainWindow
+  id: cyclopedia74Window
+  !text: tr('Cyclopedia')
+  size: 679 549
+  visible: false
+  @onEscape: modules.game_cyclopedia74.hide()
+
+  // abas
+  UIWidget
+    id: tabBar
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    height: 36
+    background-color: #383838
+
+    Cyclopedia74Tab
+      id: bestiaryTab
+      anchors.left: parent.left
+      margin-left: 0
+      width: 100
+      !text: tr('Bestiary')
+      @onClick: modules.game_cyclopedia74.showTab('bestiary')
+
+    Cyclopedia74Tab
+      id: charmTab
+      width: 100
+      !text: tr('Charm')
+      @onClick: modules.game_cyclopedia74.showTab('charm')
+
+    Cyclopedia74Tab
+      id: achievementsTab
+      width: 140
+      !text: tr('Achievements')
+      @onClick: modules.game_cyclopedia74.showTab('achievements')
+
+  // ---- Bestiary: grade ----------------------------------------------------
+  UIWidget
+    id: bestiaryPanel
+    anchors.top: tabBar.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-top: 5
+
+    Button
+      id: searchButton
+      size: 60 20
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin-bottom: 4
+      !text: tr('Search')
+      @onClick: modules.game_cyclopedia74.doSearch()
+
+    TextEdit
+      id: searchEdit
+      size: 150 17
+      anchors.right: searchButton.left
+      anchors.verticalCenter: searchButton.verticalCenter
+      margin-right: 5
+      placeholder: Type to search
+      placeholder-color: #6E706F
+      color: #C0C0C0
+      text-align: left
+      text-offset: 0 -1
+      @onEnter: modules.game_cyclopedia74.doSearch()
+
+    Label
+      id: pageLabel
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.verticalCenter: searchButton.verticalCenter
+      size: 50 20
+      text-align: center
+      !text: '1 / 1'
+      color: #C2C2C2
+
+    Button
+      id: nextButton
+      size: 20 20
+      anchors.left: pageLabel.right
+      anchors.verticalCenter: pageLabel.verticalCenter
+      icon-source: /game_cyclopedia74/images/icon-right-arrow
+      @onClick: modules.game_cyclopedia74.changePage(1)
+      $disabled:
+        icon-source: /game_cyclopedia74/images/icon-right-arrow-disabled
+
+    Button
+      id: prevButton
+      size: 20 20
+      anchors.right: pageLabel.left
+      anchors.verticalCenter: pageLabel.verticalCenter
+      icon-source: /game_cyclopedia74/images/icon-left-arrow
+      @onClick: modules.game_cyclopedia74.changePage(-1)
+      $disabled:
+        icon-source: /game_cyclopedia74/images/icon-left-arrow-disabled
+
+    UIButton
+      id: firstButton
+      size: 20 20
+      anchors.right: prevButton.left
+      anchors.verticalCenter: pageLabel.verticalCenter
+      margin-right: 10
+      image-source: /game_cyclopedia74/images/button_back
+      @onClick: modules.game_cyclopedia74.changePage('first')
+      $pressed:
+        image-source: /game_cyclopedia74/images/button_back_pressed
+      $disabled:
+        image-source: /game_cyclopedia74/images/button_back_disabled
+
+    Panel
+      id: listBase
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: searchButton.top
+      margin-bottom: 5
+
+      UIWidget
+        id: grid
+        anchors.fill: parent
+        padding-left: 5
+        padding-top: 5
+        layout:
+          type: grid
+          cell-size: 123 123
+          cell-spacing: 5
+          num-columns: 5
+          flow: true
+
+      Label
+        id: loadingLabel
+        anchors.centerIn: parent
+        color: #9d9d9d
+        text-auto-resize: true
+        phantom: true
+
+      // ---- Bestiary: ficha da criatura -------------------------------------
+      UIWidget
+        id: creatureInfo
+        anchors.fill: parent
+        image-source: /images/ui/outfits/minipanel
+        image-border: 20
+        visible: false
+        !text: tr('Creature Name')
+        text-align: top
+        text-offset: 0 4
+        color: #919191
+
+        UIWidget
+          id: leftBase
+          anchors.left: parent.left
+          anchors.top: parent.top
+          anchors.bottom: parent.verticalCenter
+          margin-top: 20
+          margin-left: 5
+          width: 125
+          phantom: true
+          // elite creatures: "Stage: Normal / 1 Star / 2 Stars / 3 Stars", como no Miracle
+          ComboBox
+            id: stageCombo
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            margin-left: 2
+            margin-right: 2
+            height: 20
+          CheckBox
+            id: trackCheck
+            anchors.bottom: stageCombo.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            margin-bottom: 6
+            !text: tr('Track Kills')
+            text-auto-resize: true
+            color: #C7C7C7
+            @onCheckChange: modules.game_cyclopedia74.onTrackChange(self:isChecked())
+          UICreature
+            id: sprite
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            margin-top: 30
+            size: 96 96
+            border-width: 0
+            padding: 0
+          // estrelas da elite, no canto de cima à direita do boneco
+          // estrelas da elite (as do Miracle), na mesma posição das prints
+          UIWidget
+            id: eliteStars
+            anchors.top: sprite.top
+            anchors.left: sprite.left
+            margin-top: 8
+            margin-left: 77
+            size: 9 10
+            image-source: /game_elite74/images/stars_card1
+            visible: false
+            phantom: true
+
+        // Total Kills: 3 barras (60x25, moldura afundada de 1 px, 1 px entre elas)
+        Cyclopedia74Sunken
+          id: progressBorder2
+          anchors.left: leftBase.right
+          anchors.top: parent.top
+          margin-top: 36
+          margin-left: 79
+          size: 60 25
+          background-color: #363636
+        Cyclopedia74Sunken
+          id: progressBorder1
+          anchors.right: progressBorder2.left
+          anchors.top: progressBorder2.top
+          margin-right: 1
+          size: 60 25
+          background-color: #363636
+        Cyclopedia74Sunken
+          id: progressBorder3
+          anchors.left: progressBorder2.right
+          anchors.top: progressBorder2.top
+          margin-left: 1
+          size: 60 25
+          background-color: #363636
+        UIWidget
+          id: progressBack1
+          anchors.left: progressBorder1.left
+          anchors.top: progressBorder1.top
+          margin-left: 1
+          margin-top: 1
+          height: 23
+          phantom: true
+        UIWidget
+          id: progressBack2
+          anchors.left: progressBorder2.left
+          anchors.top: progressBorder2.top
+          margin-left: 1
+          margin-top: 1
+          height: 23
+          phantom: true
+        UIWidget
+          id: progressBack3
+          anchors.left: progressBorder3.left
+          anchors.top: progressBorder3.top
+          margin-left: 1
+          margin-top: 1
+          height: 23
+          phantom: true
+        Label
+          id: progressValue
+          anchors.centerIn: progressBorder2
+          text-auto-resize: true
+          !text: '0'
+          phantom: true
+        Label
+          id: totalLabel
+          anchors.bottom: progressBorder2.top
+          anchors.left: progressBorder1.right
+          margin-bottom: 2
+          !text: tr('Total Kills')
+          color: #C7C7C7
+
+        // dificuldade (5 caveiras) e ocorrência (4 diamantes)
+        UIWidget
+          id: starBase
+          anchors.left: progressBorder1.left
+          anchors.top: progressBorder2.bottom
+          margin-top: 4
+          image-source: /game_cyclopedia74/images/bestiary/difficulty_disabled
+          image-repeated: true
+          size: 50 9
+        UIWidget
+          id: starFill
+          anchors.left: progressBorder1.left
+          anchors.top: starBase.top
+          image-source: /game_cyclopedia74/images/bestiary/difficulty
+          image-repeated: true
+          size: 0 9
+        UIWidget
+          id: diamondBase
+          anchors.left: progressBorder1.left
+          anchors.top: starFill.bottom
+          margin-top: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-diamond-inactive
+          image-repeated: true
+          size: 36 10
+        UIWidget
+          id: diamondFill
+          anchors.left: progressBorder1.left
+          anchors.top: diamondBase.top
+          image-source: /game_cyclopedia74/images/icons/monster-icon-diamond-active
+          image-repeated: true
+          size: 0 10
+        // invocar / convencer
+        UIWidget
+          id: summonIcon
+          anchors.top: diamondBase.bottom
+          anchors.left: diamondBase.left
+          margin-top: 5
+          size: 18 9
+          image-source: /images/icons/icons-skills
+          image-clip: 18 0 18 9
+        UIWidget
+          id: convinceIcon
+          anchors.top: summonIcon.top
+          anchors.left: summonIcon.right
+          margin-left: 2
+          size: 18 9
+          image-source: /images/icons/icons-skills
+          image-clip: 36 0 18 9
+        UIWidget
+          id: bonusIcon
+          anchors.top: summonIcon.bottom
+          anchors.left: summonIcon.left
+          margin-top: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-bonuspoints
+        Label
+          id: bonusValue
+          anchors.verticalCenter: bonusIcon.verticalCenter
+          anchors.left: bonusIcon.right
+          margin-left: 5
+          text-auto-resize: true
+          !text: '?'
+          color: #C7C7C7
+
+        // Charm Selection
+        UIWidget
+          id: charmBase
+          anchors.bottom: leftBase.bottom
+          anchors.left: bonusIcon.left
+          image-source: /images/ui/panel_flat
+          image-border: 10
+          size: 45 45
+          UIWidget
+            id: charmIcon
+            anchors.centerIn: parent
+            size: 22 22
+            phantom: true
+        Button
+          id: selectButton
+          size: 70 20
+          anchors.left: charmBase.right
+          anchors.bottom: charmBase.bottom
+          margin-left: 5
+          !text: tr('Select')
+          text-offset: 0 -1
+          color: #C0C0C0
+          @onClick: modules.game_cyclopedia74.selectCharmForRace()
+        ComboBox
+          id: charmSelector
+          anchors.left: selectButton.left
+          anchors.right: progressBorder3.right
+          anchors.top: charmBase.top
+          text-align: center
+          @onOptionChange: modules.game_cyclopedia74.onCharmOptionChange()
+        UIWidget
+          id: balanceBase
+          anchors.right: charmSelector.right
+          anchors.left: selectButton.right
+          anchors.bottom: selectButton.bottom
+          height: 20
+          margin-left: 5
+          image-source: /images/ui/item
+          image-border: 10
+          UIWidget
+            id: goldIcon
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            margin-right: 5
+            image-source: /game_cyclopedia74/images/icon_gold
+          Label
+            id: goldBalance
+            anchors.right: goldIcon.left
+            anchors.verticalCenter: parent.verticalCenter
+            margin-right: 5
+            text-align: right
+            !text: '?'
+        Label
+          id: charmLabel
+          anchors.bottom: charmBase.top
+          anchors.left: charmBase.left
+          margin-bottom: 3
+          text-auto-resize: true
+          !text: tr('Charm Selection:')
+          color: #C7C7C7
+
+        // vida / exp / velocidade / armadura
+        UIWidget
+          id: iconsSep
+          anchors.left: progressBorder2.left
+          anchors.top: progressBorder2.bottom
+          anchors.bottom: charmLabel.top
+          margin-left: 24
+          margin-top: 4
+          margin-bottom: 4
+          width: 1
+          background-color: #6a6a6a
+        UIWidget
+          id: icon1
+          anchors.top: iconsSep.top
+          anchors.left: iconsSep.right
+          margin-top: 2
+          margin-left: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-hitpoints
+        Label
+          id: value1
+          anchors.verticalCenter: icon1.verticalCenter
+          anchors.left: icon1.right
+          margin-left: 5
+          margin-bottom: 1
+          text-auto-resize: true
+          !text: '?'
+          color: #C7C7C7
+        UIWidget
+          id: icon2
+          anchors.top: icon1.bottom
+          anchors.left: iconsSep.right
+          margin-top: 7
+          margin-left: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-experience
+        Label
+          id: value2
+          anchors.verticalCenter: icon2.verticalCenter
+          anchors.left: icon2.right
+          margin-left: 5
+          margin-bottom: 1
+          text-auto-resize: true
+          !text: '?'
+          color: #C7C7C7
+        UIWidget
+          id: icon3
+          anchors.top: icon2.bottom
+          anchors.left: iconsSep.right
+          margin-top: 7
+          margin-left: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-speed
+        Label
+          id: value3
+          anchors.verticalCenter: icon3.verticalCenter
+          anchors.left: icon3.right
+          margin-left: 5
+          margin-bottom: 1
+          text-auto-resize: true
+          !text: '?'
+          color: #C7C7C7
+        UIWidget
+          id: icon4
+          anchors.top: icon3.bottom
+          anchors.left: iconsSep.right
+          margin-top: 7
+          margin-left: 5
+          image-source: /game_cyclopedia74/images/icons/monster-icon-armor
+        Label
+          id: value4
+          anchors.verticalCenter: icon4.verticalCenter
+          anchors.left: icon4.right
+          margin-left: 5
+          margin-bottom: 1
+          text-auto-resize: true
+          !text: '?'
+          color: #C7C7C7
+
+        // resistências (2 linhas de 4)
+        UIWidget
+          id: physicalResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-physical-resist
+          anchors.left: progressBorder3.right
+          anchors.top: parent.top
+          margin-top: 35
+          margin-left: 10
+        Cyclopedia74Resist
+          id: physicalProgress
+          anchors.left: physicalResist.right
+          anchors.bottom: physicalResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: earthResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-earth-resist
+        Cyclopedia74Resist
+          id: earthProgress
+          anchors.left: earthResist.right
+          anchors.bottom: earthResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: fireResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-fire-resist
+        Cyclopedia74Resist
+          id: fireProgress
+          anchors.left: fireResist.right
+          anchors.bottom: fireResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: deathResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-death-resist
+        Cyclopedia74Resist
+          id: deathProgress
+          anchors.left: deathResist.right
+          anchors.bottom: deathResist.bottom
+          margin-left: 5
+        UIWidget
+          id: energyResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-energy-resist
+          anchors.left: progressBorder3.right
+          anchors.top: physicalResist.bottom
+          margin-top: 10
+          margin-left: 10
+        Cyclopedia74Resist
+          id: energyProgress
+          anchors.left: energyResist.right
+          anchors.bottom: energyResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: holyResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-holy-resist
+        Cyclopedia74Resist
+          id: holyProgress
+          anchors.left: holyResist.right
+          anchors.bottom: holyResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: iceResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-ice-resist
+        Cyclopedia74Resist
+          id: iceProgress
+          anchors.left: iceResist.right
+          anchors.bottom: iceResist.bottom
+          margin-left: 5
+        Cyclopedia74ResistIcon
+          id: healingResist
+          image-source: /game_cyclopedia74/images/icons/monster-icon-healing-resist
+        Cyclopedia74Resist
+          id: healingProgress
+          anchors.left: healingResist.right
+          anchors.bottom: healingResist.bottom
+          margin-left: 5
+
+        // loot
+        UIWidget
+          id: itemsBase
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: leftBase.bottom
+          anchors.bottom: parent.bottom
+          margin-top: 5
+          margin-bottom: 5
+          margin-left: 5
+          margin-right: 5
+          border-width: 1
+          border-color-top: #2c2c2c
+          border-color-left: #2f2f2f
+          border-color-bottom: #757575
+          border-color-right: #747474
+          UIScrollArea
+            id: itemList
+            anchors.fill: parent
+            margin-bottom: 5
+            margin-left: 5
+            margin-right: 16
+            padding-top: 5
+            vertical-scrollbar: itemListScrollBar
+            layout: verticalBox
+          VerticalScrollBar
+            id: itemListScrollBar
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            margin-right: 2
+            margin-top: 2
+            margin-bottom: 2
+            step: 37
+            pixels-scroll: true
+
+  // ---- Charm ----------------------------------------------------------------
+  UIWidget
+    id: charmPanel
+    anchors.top: tabBar.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-top: 5
+    visible: false
+
+    UIWidget
+      id: info
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.bottom: parent.bottom
+      width: 165
+      image-source: /images/ui/outfits/minipanel
+      image-border: 20
+      padding: 6
+      padding-top: 20
+      !text: tr('Information')
+      text-align: top
+      text-offset: 0 4
+      color: #919191
+
+      Label
+        id: charmName
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        margin-top: 4
+        color: #ffffff
+        text-align: center
+
+      Label
+        id: charmDescription
+        anchors.top: charmName.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        margin-top: 4
+        height: 110
+        color: #C7C7C7
+        text-wrap: true
+        text-align: topLeft
+
+      Button
+        id: unlockButton
+        anchors.top: charmDescription.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        margin-top: 4
+        height: 20
+        !text: tr('Unlock')
+        @onClick: modules.game_cyclopedia74.unlockCharm()
+
+      Label
+        id: selectLabel
+        anchors.top: unlockButton.bottom
+        anchors.left: parent.left
+        margin-top: 8
+        !text: tr('Select creature:')
+        color: #C7C7C7
+        text-auto-resize: true
+
+      TextList
+        id: creatureList
+        anchors.top: selectLabel.bottom
+        anchors.left: parent.left
+        anchors.right: creatureScroll.left
+        anchors.bottom: searchLabel.top
+        margin-top: 3
+        margin-bottom: 4
+        vertical-scrollbar: creatureScroll
+        image-source: /images/ui/textedit
+        image-border: 10
+        padding: 2
+
+      VerticalScrollBar
+        id: creatureScroll
+        anchors.top: selectLabel.bottom
+        anchors.right: parent.right
+        anchors.bottom: searchLabel.top
+        margin-top: 3
+        margin-bottom: 4
+        step: 14
+        pixels-scroll: true
+
+      Label
+        id: searchLabel
+        anchors.left: parent.left
+        anchors.bottom: creatureSearch.top
+        margin-bottom: 2
+        !text: tr('Search:')
+        color: #C7C7C7
+        text-auto-resize: true
+
+      TextEdit
+        id: creatureSearch
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: assignButton.top
+        margin-bottom: 6
+        height: 20
+        placeholder: Type to search
+        placeholder-color: #6E706F
+        @onTextChange: modules.game_cyclopedia74.fillCreatureList()
+
+      Button
+        id: assignButton
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        width: 80
+        height: 20
+        !text: tr('Select')
+        @onClick: modules.game_cyclopedia74.assignCharm()
+
+      Button
+        id: removeButton
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        width: 80
+        height: 20
+        !text: tr('Remove')
+        @onClick: modules.game_cyclopedia74.removeCharm()
+
+    ScrollablePanel
+      id: charmGrid
+      anchors.top: parent.top
+      anchors.left: info.right
+      anchors.right: charmScroll.left
+      anchors.bottom: parent.bottom
+      margin-left: 5
+      margin-right: 2
+      padding-top: 2
+      vertical-scrollbar: charmScroll
+      layout:
+        type: grid
+        cell-size: 145 100
+        cell-spacing: 5
+        num-columns: 3
+        flow: true
+
+    VerticalScrollBar
+      id: charmScroll
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      step: 30
+      pixels-scroll: true
+
+  // ---- Achievements --------------------------------------------------------
+  UIWidget
+    id: achievementsPanel
+    anchors.top: tabBar.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-top: 5
+    visible: false
+    image-source: /images/ui/outfits/minipanel
+    image-border: 20
+
+    Label
+      anchors.centerIn: parent
+      !text: tr('Achievements are not available yet.')
+      color: #9d9d9d
+      text-auto-resize: true
+
+  // ---- rodapé ---------------------------------------------------------------
+  HorizontalSeparator
+    id: bottomSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 10
+
+  UIWidget
+    id: goldBase
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    image-source: /images/ui/item
+    image-border: 10
+    size: 131 20
+    !tooltip: tr('Gold in your inventory')
+    UIWidget
+      id: icon
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      image-source: /game_cyclopedia74/images/icon_gold
+    Label
+      id: value
+      anchors.right: icon.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      !text: '0'
+      text-auto-resize: true
+      color: #BDBDBD
+
+  UIWidget
+    id: charmsBase
+    anchors.bottom: parent.bottom
+    anchors.left: goldBase.right
+    margin-left: 5
+    image-source: /images/ui/item
+    image-border: 10
+    size: 80 20
+    !tooltip: tr('Available charm points')
+    UIWidget
+      id: icon
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      image-source: /game_cyclopedia74/images/icon_charms
+    Label
+      id: value
+      anchors.right: icon.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      !text: '0'
+      text-auto-resize: true
+      color: #BDBDBD
+
+  // elite points (estrela laranja), no lugar dos achievements como no Miracle
+  UIWidget
+    id: eliteBase
+    anchors.bottom: parent.bottom
+    anchors.left: charmsBase.right
+    margin-left: 5
+    image-source: /images/ui/item
+    image-border: 10
+    size: 80 20
+    !tooltip: tr('Available elite points')
+    UIWidget
+      id: icon
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      size: 9 9
+      image-source: /game_elite74/images/icon_elite
+    Label
+      id: value
+      anchors.right: icon.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      !text: '0'
+      text-auto-resize: true
+      color: #BDBDBD
+
+  Button
+    id: trackerButton
+    size: 110 20
+    anchors.bottom: parent.bottom
+    anchors.left: eliteBase.right
+    margin-left: 5
+    !text: tr('Bestiary Tracker')
+    text-offset: 0 -1
+    color: #C0C0C0
+    @onClick: modules.game_cyclopedia74.toggleTracker()
+
+  Button
+    id: closeButton
+    size: 60 20
+    anchors.bottom: parent.bottom
+    anchors.right: parent.right
+    !text: tr('Close')
+    text-offset: 0 -1
+    color: #C0C0C0
+    @onClick: modules.game_cyclopedia74.hide()

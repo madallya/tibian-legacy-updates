@@ -1,0 +1,148 @@
+// Quest Log no estilo do cliente do Miracle: lista das quests começadas e, ao
+// abrir uma ("Show"), as missões com a marca de feita.
+
+QuestLog74Row < Label
+  height: 15
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 4 1
+  text-wrap: false
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #6d6d6d
+    color: #ffffff
+
+QuestLine74Row < UIWidget
+  height: 16
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #6d6d6d
+
+  UIWidget
+    id: check
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 3
+    size: 12 12
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: check.right
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 5
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    phantom: true
+
+QuestLog74List < TextList
+  image-source: /images/ui/textedit
+  image-border: 1
+  background-color: #565656
+  padding: 1
+  focusable: false
+  vertical-scrollbar: next
+
+MainWindow
+  id: questLog74Window
+  !text: tr('Quest Log')
+  size: 395 400
+  visible: false
+  @onEscape: modules.game_questlog74.hide()
+
+  QuestLog74List
+    id: questList
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: questScroll.left
+    anchors.bottom: bottomSeparator.top
+    margin-bottom: 8
+
+  VerticalScrollBar
+    id: questScroll
+    anchors.top: parent.top
+    anchors.bottom: bottomSeparator.top
+    anchors.right: parent.right
+    margin-bottom: 8
+    step: 15
+    pixels-scroll: true
+
+  Label
+    id: emptyLabel
+    anchors.centerIn: questList
+    font: verdana-11px-antialised
+    color: #9d9d9d
+    text-auto-resize: true
+    phantom: true
+
+  // missões da quest aberta ("Show")
+  QuestLog74List
+    id: missionList
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: missionScroll.left
+    height: 150
+    visible: false
+
+  VerticalScrollBar
+    id: missionScroll
+    anchors.top: parent.top
+    anchors.right: parent.right
+    height: 150
+    step: 16
+    pixels-scroll: true
+    visible: false
+
+  Label
+    id: missionText
+    anchors.top: missionList.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-top: 8
+    margin-bottom: 8
+    padding: 4
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: true
+    text-align: topLeft
+    image-source: /images/ui/textedit
+    image-border: 1
+    background-color: #565656
+    visible: false
+
+  HorizontalSeparator
+    id: bottomSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 8
+
+  Button
+    id: trackerButton
+    !text: tr('Quest Tracker')
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    width: 90
+    @onClick: modules.game_questlog74.trackSelected()
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    width: 64
+    @onClick: modules.game_questlog74.hide()
+
+  Button
+    id: showButton
+    !text: tr('Show')
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    width: 64
+    @onClick: modules.game_questlog74.toggleShow()

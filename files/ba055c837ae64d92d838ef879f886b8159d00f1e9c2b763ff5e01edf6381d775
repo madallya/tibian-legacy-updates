@@ -1,0 +1,823 @@
+-- Hunt Analyzer (OTServ 7.4 / Tibian Legacy), no estilo do cliente do Miracle.
+--
+-- O protocolo 7.4 não manda mensagens de loot nem de experiência por morte, então
+-- o servidor manda os eventos pelo comando 0xEA (ver src/game/hunt.hh):
+--   * morte: monstro que deu experiência ao jogador (nome, outfit, experiência);
+--   * loot: item de corpo de monstro que entrou no inventário (conta uma vez só);
+--   * supply: runa (carga), mana/life fluid ou comida gastos;
+--   * tabela de preços padrão (tipo "Default"), pedida em páginas ao entrar.
+--
+-- A sessão só começa a contar o tempo na primeira morte que dá experiência. Ao
+-- deslogar o tempo para e continua no próximo login do mesmo personagem (com o
+-- cliente aberto); trocar de personagem zera.
+--
+-- Janelas: Hunt Analyzer (tempo + 3 botões) e Exp/Loot/Kills Statistics, todas
+-- na coluna (mover entre painéis, travar, minimizar). Botão direito em qualquer
+-- uma: Set items prices, resets e Copy to Clipboard.
+
+local OPCODE = 0xEA
+local USE_VALUES_NODE = 'hunt74UseValues'
+
+local window                 -- Hunt Analyzer
+local statsWindows = {}      -- exp / loot / kills
+local pricesWindow
+local updateEvent
+
+local S                      -- sessão
+local charKey
+local lastExp
+
+local prices = {}            -- chave -> { clientId, subType, name, value }
+local priceList = {}         -- chaves na ordem do servidor (por nome)
+local pricesVersion
+local pricesLoading          -- tabela nova chegando em páginas
+local useValues = {}         -- chave (string) -> valor do jogador
+
+-- moedas: valor fixo, fora do Set items prices (tipos do servidor)
+local COIN_VALUES = { [3031 * 256] = 1, [3035 * 256] = 100, [3043 * 256] = 10000 }
+
+local PENDING_EXP_MS = 3000
+local MIN_RATE_MS = 30 * 1000
+
+-- Utilidades ------------------------------------------------------------------------
+local function now()
+    return g_clock.millis()
+end
+
+-- Experiência do Tibia 7.x para chegar ao nível L
+local function expForLevel(level)
+    level = level - 1
+    return math.floor((50 * level * level * level - 150 * level * level + 400 * level) / 3)
+end
+
+local function commas(n)
+    local s = tostring(math.floor(math.abs(n) + 0.5))
+    local out = s:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+    if out:sub(1, 1) == ',' then out = out:sub(2) end
+    return (n < 0 and '-' or '') .. out
+end
+
+-- como no Miracle: 524k, 4,625kk
+local function shortExp(n)
+    n = math.floor(n + 0.5)
+    if n < 1000 then return tostring(n) end
+    if n < 1000000 then return commas(math.floor(n / 1000)) .. 'k' end
+    return string.format('%d,%03dkk', math.floor(n / 1000000), math.floor(n / 1000) % 1000)
+end
+
+-- contador dos itens na grade: 749, 6.70k, 1.2kk
+local function shortCount(n)
+    if n < 1000 then return tostring(n) end
+    if n < 10000 then return string.format('%.2fk', n / 1000) end
+    if n < 1000000 then return string.format('%dk', math.floor(n / 1000)) end
+    return string.format('%.1fkk', n / 1000000)
+end
+
+local function formatDuration(ms)
+    local total = math.max(0, math.floor(ms / 1000))
+    return string.format('%02d:%02d:%02d', math.floor(total / 3600), math.floor(total / 60) % 60, total % 60)
+end
+
+local function formatHoursMinutes(ms)
+    local total = math.max(0, math.floor(ms / 60000))
+    return string.format('%02d:%02d', math.floor(total / 60), total % 60)
+end
+
+local function titleCase(name)
+    return (name:gsub("(%a)([%w']*)", function(a, b) return a:upper() .. b end))
+end
+
+local function priceKey(typeId, liquid)
+    return typeId * 256 + (liquid or 0)
+end
+
+-- item com atributos (subcomando 6): entrada própria no Looted items, com a
+-- moldura, mas com o preço do tipo (sem preço próprio). A chave guarda a
+-- quantidade de atributos acima dos 24 bits do priceKey.
+local ATTR_KEY = 16777216
+
+local function baseKey(key)
+    return key % ATTR_KEY
+end
+
+local function attrsOfKey(key)
+    return math.floor(key / ATTR_KEY)
+end
+
+local function attrsText(n)
+    if not n or n <= 0 then return '' end
+    return string.format(' (%d attribute%s)', n, n > 1 and 's' or '')
+end
+
+local function isSpectating()
+    return modules.game_livecam74 and modules.game_livecam74.isSpectating and modules.game_livecam74.isSpectating()
+end
+
+local function send(sub, fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() or isSpectating() then return end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(sub)
+    if fill then fill(msg) end
+    protocol:send(msg)
+end
+
+-- Preços ----------------------------------------------------------------------------
+local function loadUseValues()
+    useValues = {}
+    local node = g_settings.getNode(USE_VALUES_NODE)
+    if type(node) == 'table' then
+        for k, v in pairs(node) do
+            local n = tonumber(v)
+            if n then useValues[tostring(k)] = math.floor(n) end
+        end
+    end
+end
+
+local function saveUseValues()
+    g_settings.setNode(USE_VALUES_NODE, useValues)
+    g_settings.save()
+end
+
+function getItemValue(key)
+    key = baseKey(key)
+    if COIN_VALUES[key] then return COIN_VALUES[key] end
+    local own = useValues[tostring(key)]
+    if own then return own end
+    local p = prices[key]
+    return p and p.value or 0
+end
+
+-- O servidor atende no máximo 1 página a cada 30 ms; com o servidor perto a
+-- resposta volta antes disso, então as páginas são pedidas com intervalo e a
+-- que não chegar é pedida de novo (antes o pedido era descartado e a tabela
+-- ficava vazia: "No items found." no Set items prices).
+local PAGE_INTERVAL_MS = 80
+local PAGE_RETRY_MS = 1500
+local PAGE_MAX_RETRIES = 5
+local pendingPage   -- { start, at, retries }
+local pageEvent
+
+local function requestPrices(start)
+    start = start or 0
+    if pendingPage and pendingPage.start == start then
+        pendingPage.at = now()
+    else
+        pendingPage = { start = start, at = now(), retries = 0 }
+    end
+    send(1, function(msg) msg:addU16(start) end)
+end
+
+local function requestPricesLater(start)
+    if pageEvent then removeEvent(pageEvent) end
+    pageEvent = scheduleEvent(function()
+        pageEvent = nil
+        requestPrices(start)
+    end, PAGE_INTERVAL_MS)
+end
+
+local function checkPendingPage()
+    local p = pendingPage
+    if not p or pageEvent or now() - p.at < PAGE_RETRY_MS then return end
+    if p.retries >= PAGE_MAX_RETRIES then pendingPage = nil; return end
+    p.retries = p.retries + 1
+    requestPrices(p.start)
+end
+
+-- Sessão ----------------------------------------------------------------------------
+local function newSession()
+    S = {
+        started = false,
+        accum = 0,            -- ms jogados antes do login atual
+        runningSince = nil,   -- instante em que o tempo voltou a correr
+        startWall = nil,      -- os.time() do início (Copy to Clipboard)
+        pendingExp = 0, pendingAt = 0,
+        exp = { gained = 0, base = 0 },
+        loot = { items = {}, order = {}, supplies = {}, supplyOrder = {}, base = 0 },
+        kills = { total = 0, list = {}, order = {} },
+        meta = {},            -- chave -> { clientId, subType, name } vista nos eventos
+    }
+end
+
+local function sessionMs()
+    if not S or not S.started then return 0 end
+    return S.accum + (S.runningSince and (now() - S.runningSince) or 0)
+end
+
+local function perHour(value, base)
+    local ms = sessionMs() - (base or 0)
+    if ms < MIN_RATE_MS then return 0 end
+    return value * 3600000 / ms
+end
+
+local function startSessionIfNeeded()
+    if S.started then return end
+    S.started = true
+    S.accum = 0
+    S.runningSince = g_game.isOnline() and now() or nil
+    S.startWall = os.time()
+    S.exp.base, S.loot.base = 0, 0
+    if S.pendingExp > 0 and now() - S.pendingAt <= PENDING_EXP_MS then
+        S.exp.gained = S.exp.gained + S.pendingExp
+    end
+    S.pendingExp = 0
+end
+
+local function itemMeta(key)
+    local m = S.meta[key]
+    local p = prices[baseKey(key)]
+    return {
+        clientId = (m and m.clientId) or (p and p.clientId) or 0,
+        subType = (m and m.subType) or (p and p.subType) or 0,
+        name = (p and p.name) or (m and m.name) or '?',
+    }
+end
+
+local function lootTotals()
+    local loot, supply = 0, 0
+    for key, count in pairs(S.loot.items) do loot = loot + count * getItemValue(key) end
+    for key, count in pairs(S.loot.supplies) do supply = supply + count * getItemValue(key) end
+    return loot, supply
+end
+
+-- Interface -------------------------------------------------------------------------
+local function setRow(row, label, value, color)
+    if not row then return end
+    row:getChildById('label'):setText(label)
+    local v = row:getChildById('value')
+    v:setText(value)
+    v:setColor(color or '#dfdfdf')
+end
+
+local function contents(win)
+    return win and win:getChildById('contentsPanel')
+end
+
+local function refreshSessionRow()
+    if not window then return end
+    local row = window:recursiveGetChildById('sessionRow')
+    if row then setRow(row, tr('Session') .. ':', formatDuration(sessionMs())) end
+end
+
+local function refreshExp()
+    local win = statsWindows.exp
+    if not win or not win:isVisible() then return end
+    local c = contents(win)
+    local player = g_game.getLocalPlayer()
+    local level = player and player:getLevel() or 0
+    local exp = player and player:getExperience() or 0
+    local toNext = level > 0 and math.max(0, expForLevel(level + 1) - exp) or 0
+    local rate = perHour(S.exp.gained, S.exp.base)
+    setRow(c:getChildById('expHour'), tr('Exp/h') .. ':', shortExp(rate))
+    setRow(c:getChildById('expGained'), tr('Exp Gained') .. ':', shortExp(S.exp.gained))
+    setRow(c:getChildById('expToLevel'), tr('Exp to Level') .. ':', shortExp(toNext))
+    setRow(c:getChildById('timeToLevel'), tr('Time to Level') .. ':',
+        rate > 0 and formatHoursMinutes(toNext / rate * 3600000) or '--:--')
+end
+
+local function fillGrid(grid, items, order)
+    grid:destroyChildren()
+    for _, key in ipairs(order) do
+        local count = items[key]
+        if count and count > 0 then
+            local m = itemMeta(key)
+            local cell = g_ui.createWidget('Hunt74ItemCell', grid)
+            cell:setItemId(m.clientId)
+            if m.subType and m.subType > 0 then
+                cell:setItemSubType(m.subType)
+            else
+                cell:setItemCount(math.min(count, 100))
+            end
+            if cell.setShowCount then cell:setShowCount(false) end
+            cell:getChildById('count'):setText(count > 1 and shortCount(count) or '')
+            local attrs = attrsOfKey(key)
+            ItemsDatabase.setAttrFrame(cell, attrs)
+            cell:setTooltip(string.format('%s%s\n%s x %s = %s gp', titleCase(m.name), attrsText(attrs), commas(count),
+                commas(getItemValue(key)), commas(count * getItemValue(key))))
+        end
+    end
+end
+
+local function refreshLootNumbers()
+    local win = statsWindows.loot
+    if not win or not win:isVisible() then return end
+    local c = contents(win)
+    local loot, supply = lootTotals()
+    local profit = loot - supply
+    local profitColor = profit > 0 and '#44ad25' or (profit < 0 and '#ff7a2e' or '#dfdfdf')
+    setRow(c:getChildById('lootType'), tr('Type') .. ':', tr('Default'))
+    setRow(c:getChildById('supply'), tr('Supply') .. ':', commas(supply))
+    setRow(c:getChildById('loot'), tr('Loot') .. ':', commas(loot))
+    setRow(c:getChildById('lootHour'), tr('Loot/h') .. ':', commas(perHour(loot, S.loot.base)))
+    setRow(c:getChildById('profit'), tr('Profit') .. ':', commas(profit), profitColor)
+    setRow(c:getChildById('profitHour'), tr('Profit/h') .. ':', commas(perHour(profit, S.loot.base)), profitColor)
+end
+
+local function refreshLoot()
+    local win = statsWindows.loot
+    if not win or not win:isVisible() then return end
+    local c = contents(win)
+    refreshLootNumbers()
+    c:getChildById('lootedCaption'):setText(tr('Looted items') .. ':')
+    c:getChildById('suppliesCaption'):setText(tr('Supplies used') .. ':')
+    fillGrid(c:getChildById('lootedItems'), S.loot.items, S.loot.order)
+    fillGrid(c:getChildById('suppliesUsed'), S.loot.supplies, S.loot.supplyOrder)
+end
+
+local function refreshKills()
+    local win = statsWindows.kills
+    if not win or not win:isVisible() then return end
+    local c = contents(win)
+    setRow(c:getChildById('total'), tr('Total') .. ':', commas(S.kills.total))
+    c:getChildById('creaturesCaption'):setText(tr('Creatures') .. ':')
+    local list = c:getChildById('creatures')
+    list:destroyChildren()
+    local entries = {}
+    for _, name in ipairs(S.kills.order) do table.insert(entries, S.kills.list[name]) end
+    table.sort(entries, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        if a.name ~= b.name then return a.name < b.name end
+        return (a.stage or 0) < (b.stage or 0)
+    end)
+    local eliteMod = modules.game_elite74
+    for i, e in ipairs(entries) do
+        if i > 1 then g_ui.createWidget('Hunt74Separator', list) end
+        local row = g_ui.createWidget('Hunt74KillRow', list)
+        local creatureWidget = row:getChildById('creature')
+        if e.outfit then creatureWidget:setOutfit(e.outfit) end
+        row:getChildById('name'):setText(titleCase(e.name))
+        local stage = e.stage or 0
+        local stars = row:getChildById('stars')
+        if stage > 0 and eliteMod then
+            -- elite: aura no boneco e as estrelas depois do nome
+            eliteMod.applyEliteLook(creatureWidget:getCreature(), stage)
+            if stars then
+                stars:setImageSource(eliteMod.eliteCardStarsImage(stage))
+                stars:setSize(eliteMod.eliteStarsSize(stage))
+                stars:setVisible(true)
+                stars:setTooltip(tr('Elite creature') .. ' (' .. eliteMod.eliteStageName(stage) .. ')')
+            end
+        elseif stars then
+            stars:setVisible(false)
+        end
+        row:getChildById('kills'):setText(tr('Kills') .. ': ' .. commas(e.count))
+    end
+end
+
+local function refreshAll()
+    refreshSessionRow()
+    refreshExp()
+    refreshLoot()
+    refreshKills()
+end
+
+local function tick()
+    checkPendingPage()
+    refreshSessionRow()
+    refreshExp()
+    refreshLootNumbers()
+end
+
+-- Eventos do servidor -----------------------------------------------------------------
+-- A tabela nova é montada à parte e só substitui a atual quando chega inteira
+-- (antes, durante a recarga a tabela ficava pela metade e um item aparecia
+-- com valor 0 até a última página chegar).
+local function onPricesPage(msg)
+    local version = msg:getU32()
+    local total = msg:getU16()
+    local start = msg:getU16()
+    local count = msg:getU8()
+    if pendingPage and pendingPage.start == start then pendingPage = nil end
+    local entries = {}
+    for _ = 1, count do
+        local typeId, liquid = msg:getU16(), msg:getU8()
+        local entry = { clientId = msg:getU16(), subType = msg:getU8(), name = msg:getString(), value = msg:getU32() }
+        table.insert(entries, { key = priceKey(typeId, liquid), entry = entry })
+    end
+    if start == 0 then
+        pricesLoading = { prices = {}, list = {}, version = version, nextStart = 0, since = now() }
+    end
+    local L = pricesLoading
+    if not L or start ~= L.nextStart then return end -- página de um pedido antigo
+    if version ~= L.version then
+        -- a tabela mudou no servidor no meio: começa de novo
+        pricesLoading = nil
+        requestPricesLater(0)
+        return
+    end
+    for _, e in ipairs(entries) do
+        if not L.prices[e.key] then table.insert(L.list, e.key) end
+        L.prices[e.key] = e.entry
+    end
+    L.nextStart = start + count
+    if L.nextStart < total and count > 0 then
+        requestPricesLater(L.nextStart)
+        return
+    end
+    prices, priceList, pricesVersion = L.prices, L.list, L.version
+    pricesLoading = nil
+    refreshLoot()
+    if pricesWindow and pricesWindow:isVisible() then onPriceFilter(pricesWindow:getChildById('filter'):getText()) end
+end
+
+-- sub 2 = morte comum; sub 5 = morte de elite (mesmos campos + u8 estágio),
+-- que entra como linha separada ("Larva" com as estrelas), como pediu o dono
+local function onKill(msg, elite)
+    local name = msg:getString()
+    local lookType = msg:getU16()
+    local head, body, legs, feet = msg:getU8(), msg:getU8(), msg:getU8(), msg:getU8()
+    local lookItem = msg:getU16()
+    local exp = msg:getU32()
+    local stage = elite and msg:getU8() or 0
+    startSessionIfNeeded()
+    local outfit
+    if lookType > 0 then
+        outfit = { type = lookType, head = head, body = body, legs = legs, feet = feet }
+    elseif lookItem > 0 then
+        outfit = { type = 0, auxType = lookItem }
+    end
+    local key = stage > 0 and (name .. '\0' .. stage) or name
+    local e = S.kills.list[key]
+    if not e then
+        e = { name = name, count = 0, stage = stage }
+        S.kills.list[key] = e
+        table.insert(S.kills.order, key)
+    end
+    e.count = e.count + 1
+    e.outfit = outfit or e.outfit
+    S.kills.total = S.kills.total + 1
+    refreshKills()
+    refreshExp()
+end
+
+local function readItemEvent(msg, withAttrs)
+    local typeId, liquid = msg:getU16(), msg:getU8()
+    local clientId, subType = msg:getU16(), msg:getU8()
+    local count = msg:getU16()
+    local name = msg:getString()
+    local key = priceKey(typeId, liquid)
+    if withAttrs then
+        local attrs = math.min(msg:getU8(), 5)
+        if attrs > 0 then key = key + attrs * ATTR_KEY end
+    end
+    S.meta[key] = { clientId = clientId, subType = subType, name = name }
+    -- o item comum do mesmo tipo usa os mesmos dados (preço, lista de preços)
+    local base = baseKey(key)
+    if base ~= key and not S.meta[base] then S.meta[base] = S.meta[key] end
+    return key, count
+end
+
+local function onLoot(msg, withAttrs)
+    local key, count = readItemEvent(msg, withAttrs)
+    if not S.started then return end -- loot só conta com a sessão rodando
+    if not S.loot.items[key] then table.insert(S.loot.order, key) end
+    S.loot.items[key] = (S.loot.items[key] or 0) + count
+    refreshLoot()
+end
+
+-- Supplies used mostra só runas e fluids; a comida entra só no valor de Supply
+-- runas de feitiço são os tipos 3148..3203 do servidor (objects.srv); o nome
+-- não serve (o servidor antigo mandava "sudden death", sem "rune")
+local function isRuneOrFluid(key)
+    if key % 256 ~= 0 then return true end -- líquido (mana/life fluid)
+    local typeId = math.floor(key / 256)
+    return typeId >= 3148 and typeId <= 3203
+end
+
+local function onSupply(msg)
+    local key, count = readItemEvent(msg)
+    if not S.started then return end
+    if not S.loot.supplies[key] and isRuneOrFluid(key) then table.insert(S.loot.supplyOrder, key) end
+    S.loot.supplies[key] = (S.loot.supplies[key] or 0) + count
+    refreshLoot()
+end
+
+local function onHunt(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then onPricesPage(msg)
+    elseif sub == 2 then onKill(msg)
+    elseif sub == 3 then onLoot(msg)
+    elseif sub == 4 then onSupply(msg)
+    elseif sub == 5 then onKill(msg, true)
+    elseif sub == 6 then onLoot(msg, true) -- loot com atributos (moldura)
+    end
+end
+
+local function onExperienceChange(player, exp, oldExp)
+    if lastExp == nil or not oldExp or oldExp == 0 then
+        lastExp = exp
+        return
+    end
+    local diff = exp - lastExp
+    lastExp = exp
+    if diff <= 0 then return end
+    if S.started then
+        S.exp.gained = S.exp.gained + diff
+        refreshExp()
+    else
+        -- a experiência chega antes do aviso de morte: guarda até ele chegar
+        S.pendingExp = diff
+        S.pendingAt = now()
+    end
+end
+
+-- Resets e menu ---------------------------------------------------------------------
+function resetSession()
+    newSession()
+    refreshAll()
+end
+
+function resetExperience()
+    S.exp = { gained = 0, base = sessionMs() }
+    refreshExp()
+end
+
+function resetLoot()
+    S.loot = { items = {}, order = {}, supplies = {}, supplyOrder = {}, base = sessionMs() }
+    refreshLoot()
+end
+
+function resetKills()
+    S.kills = { total = 0, list = {}, order = {} }
+    refreshKills()
+end
+
+-- texto como o do Hunt Analyzer do Tibia
+function copyToClipboard()
+    local ms = sessionMs()
+    local loot, supply = lootTotals()
+    local lines = {}
+    local startWall = S.startWall or os.time()
+    table.insert(lines, string.format('Session data: From %s to %s',
+        os.date('%Y-%m-%d, %H:%M:%S', startWall), os.date('%Y-%m-%d, %H:%M:%S')))
+    table.insert(lines, string.format('Session: %02d:%02dh', math.floor(ms / 3600000), math.floor(ms / 60000) % 60))
+    table.insert(lines, 'XP Gain: ' .. commas(S.exp.gained))
+    table.insert(lines, 'XP/h: ' .. commas(perHour(S.exp.gained, S.exp.base)))
+    table.insert(lines, 'Loot Type: Default')
+    table.insert(lines, 'Loot: ' .. commas(loot))
+    table.insert(lines, 'Supplies: ' .. commas(supply))
+    table.insert(lines, 'Balance: ' .. commas(loot - supply))
+    table.insert(lines, 'Killed Monsters:')
+    local kills = {}
+    for _, name in ipairs(S.kills.order) do table.insert(kills, S.kills.list[name]) end
+    table.sort(kills, function(a, b) return a.count > b.count or (a.count == b.count and a.name < b.name) end)
+    for _, e in ipairs(kills) do table.insert(lines, string.format('  %dx %s', e.count, e.name)) end
+    table.insert(lines, 'Looted Items:')
+    for _, key in ipairs(S.loot.order) do
+        table.insert(lines, string.format('  %dx %s%s', S.loot.items[key], itemMeta(key).name, attrsText(attrsOfKey(key))))
+    end
+    table.insert(lines, 'Supplies Used:')
+    for _, key in ipairs(S.loot.supplyOrder) do
+        table.insert(lines, string.format('  %dx %s', S.loot.supplies[key], itemMeta(key).name))
+    end
+    g_window.setClipboardText(table.concat(lines, '\n'))
+    if modules.game_textmessage and modules.game_textmessage.displayStatusMessage then
+        modules.game_textmessage.displayStatusMessage(tr('Hunt session copied to clipboard.'))
+    end
+end
+
+local function showMenu(pos)
+    local menu = g_ui.createWidget('PopupMenu')
+    menu:setGameMenu(true)
+    menu:addOption(tr('Set items prices'), showPrices)
+    menu:addSeparator()
+    menu:addOption(tr('Reset all session'), resetSession)
+    menu:addOption(tr('Reset experience'), resetExperience)
+    menu:addOption(tr('Reset loot'), resetLoot)
+    menu:addOption(tr('Reset kills'), resetKills)
+    menu:addSeparator()
+    menu:addOption(tr('Copy to Clipboard'), copyToClipboard)
+    menu:display(pos)
+end
+
+local function attachMenu(win)
+    win.onMousePress = function(widget, mousePos, button)
+        if button == MouseRightButton then
+            showMenu(mousePos)
+            return true
+        end
+        return UIMiniWindow.onMousePress(widget, mousePos, button)
+    end
+end
+
+-- Set items prices --------------------------------------------------------------------
+local MAX_PRICE_ROWS = 100
+
+local function matchingKeys(filter)
+    filter = (filter or ''):lower():gsub('^%s+', ''):gsub('%s+$', '')
+    local keys, seen = {}, {}
+    local function add(key)
+        if not seen[key] then seen[key] = true; table.insert(keys, key) end
+    end
+    if filter == '' then
+        -- sem busca: o que apareceu na sessão e o que tem Use Value
+        for _, key in ipairs(S.loot.order) do if not COIN_VALUES[baseKey(key)] then add(baseKey(key)) end end
+        for _, key in ipairs(S.loot.supplyOrder) do if not COIN_VALUES[key] then add(key) end end
+        for _, key in ipairs(priceList) do
+            if useValues[tostring(key)] and not COIN_VALUES[key] then add(key) end
+        end
+        return keys, false
+    end
+    local more = false
+    for _, key in ipairs(priceList) do
+        local p = prices[key]
+        if not COIN_VALUES[key] and p.name:lower():find(filter, 1, true) then
+            if #keys >= MAX_PRICE_ROWS then more = true; break end
+            add(key)
+        end
+    end
+    return keys, more
+end
+
+local function onUseValueChange(key, widget)
+    local text = widget:getText()
+    local digits = text:gsub('%D', '')
+    if digits ~= text then widget:setText(digits); return end
+    if digits == '' then
+        useValues[tostring(key)] = nil
+    else
+        useValues[tostring(key)] = math.min(tonumber(digits) or 0, 2000000000)
+    end
+    saveUseValues()
+    refreshLootNumbers()
+    refreshLoot()
+end
+
+function onPriceFilter(text)
+    if not pricesWindow then return end
+    local list = pricesWindow:getChildById('list')
+    list:destroyChildren()
+    local keys, more = matchingKeys(text)
+    for _, key in ipairs(keys) do
+        local m = itemMeta(key)
+        local p = prices[key]
+        local row = g_ui.createWidget('Hunt74PriceRow', list)
+        if #list:getChildren() == 1 then row:getChildById('separator'):hide() end
+        local item = row:getChildById('item')
+        item:setItemId(m.clientId)
+        if m.subType and m.subType > 0 then item:setItemSubType(m.subType) end
+        row:getChildById('name'):setText(m.name)
+        row:getChildById('lootValue'):setText(tostring(p and p.value or 0))
+        local use = row:getChildById('useValue')
+        local own = useValues[tostring(key)]
+        use:setText(own and tostring(own) or '')
+        use.onTextChange = function(widget) onUseValueChange(key, widget) end
+    end
+    local info = pricesWindow:getChildById('info')
+    if (text or '') == '' then
+        -- a dica de busca já está no campo ("Search item..."); o texto longo ficava cortado
+        info:setText(#priceList > 0 and '' or tr('Loading prices...'))
+    elseif #keys == 0 then
+        info:setText(tr('No items found.'))
+    elseif more then
+        info:setText(tr('Showing the first %d items.', MAX_PRICE_ROWS))
+    else
+        info:setText('')
+    end
+end
+
+function showPrices()
+    if not pricesWindow then
+        pricesWindow = g_ui.loadUI('hunt74prices', rootWidget)
+    end
+    -- o servidor pode ter mudado a tabela (não recomeça uma carga em andamento)
+    if not pricesLoading or now() - pricesLoading.since > 10000 then requestPrices(0) end
+    pricesWindow:show()
+    pricesWindow:raise()
+    pricesWindow:focus()
+    local filter = pricesWindow:getChildById('filter')
+    filter:focus()
+    onPriceFilter(filter:getText())
+end
+
+function closePrices()
+    if pricesWindow then pricesWindow:hide() end
+end
+
+-- Janelas da coluna -----------------------------------------------------------------------
+local statsFiles = { exp = 'hunt74exp', loot = 'hunt74loot', kills = 'hunt74kills' }
+local statsTitles = { exp = 'Exp Statistics', loot = 'Loot Statistics', kills = 'Kills Statistics' }
+local statsHeights = { exp = 14, loot = 14, kills = 14 }
+local statsDynamic = { loot = { 'lootedItems', 'suppliesUsed' }, kills = { 'creatures' } }
+
+local function openMiniWindow(win)
+    if not win:getParent() then
+        local panel = modules.game_interface.findContentPanelAvailable(win, win:getMinimumHeight())
+        if not panel then return end
+        panel:addChild(win)
+    end
+    win:open()
+end
+
+function toggleStats(kind)
+    local win = statsWindows[kind]
+    if not win then return end
+    if win:isVisible() and win:getParent() then
+        win:close()
+    else
+        openMiniWindow(win)
+    end
+end
+
+function onStatsOpen(kind)
+    if not S then return end
+    if kind == 'exp' then refreshExp()
+    elseif kind == 'loot' then refreshLoot()
+    else refreshKills() end
+end
+
+function onStatsClose(kind) end
+
+function toggle()
+    if not window then return end
+    if window:isVisible() and window:getParent() then
+        window:close()
+    else
+        openMiniWindow(window)
+    end
+end
+
+function onMiniWindowOpen() refreshSessionRow() end
+function onMiniWindowClose() end
+
+-- Jogo ------------------------------------------------------------------------------------
+local function onGameStart()
+    local key = (g_game.getCharacterName() or '') .. '@' .. (g_game.getWorldName and g_game.getWorldName() or '')
+    if key ~= charKey or not S then
+        charKey = key
+        newSession()
+    elseif S.started then
+        S.runningSince = now()
+    end
+    local player = g_game.getLocalPlayer()
+    lastExp = player and player:getExperience() or nil
+    if lastExp == 0 then lastExp = nil end
+
+    if window then window:setupOnStart() end
+    for _, win in pairs(statsWindows) do win:setupOnStart() end
+    if window then window:scheduleFitToContents() end
+    for _, win in pairs(statsWindows) do win:scheduleFitToContents() end
+
+    pricesLoading = nil
+    requestPrices(0)
+    if updateEvent then removeEvent(updateEvent) end
+    updateEvent = cycleEvent(tick, 1000)
+    refreshAll()
+end
+
+local function onGameEnd()
+    if updateEvent then removeEvent(updateEvent); updateEvent = nil end
+    if S and S.runningSince then
+        S.accum = S.accum + (now() - S.runningSince)
+        S.runningSince = nil
+    end
+    lastExp = nil
+    if pageEvent then removeEvent(pageEvent); pageEvent = nil end
+    pendingPage, pricesLoading = nil, nil
+    closePrices()
+end
+
+function init()
+    g_ui.importStyle('hunt74styles')
+    loadUseValues()
+    newSession()
+
+    window = g_ui.loadUI('hunt74')
+    window:setup()
+    window:keepBasicButtons()
+    window:setContentMinimumHeight(20)
+    window:close(true)
+    window:enableFitToContents(true) -- tamanho fixo, sem rolagem
+    attachMenu(window)
+
+    for kind, file in pairs(statsFiles) do
+        local win = g_ui.loadUI(file)
+        win:setup()
+        win:getChildById('miniwindowTitle'):setText(tr(statsTitles[kind]))
+        win:keepBasicButtons()
+        win:setContentMinimumHeight(statsHeights[kind])
+        win:close(true)
+        -- Exp Statistics: tamanho fixo, sem rolagem. Loot/Kills: mínimo com todas
+        -- as informações fixas à mostra (sem os itens/criaturas da sessão)
+        win:enableFitToContents(kind == 'exp', statsDynamic[kind])
+        attachMenu(win)
+        statsWindows[kind] = win
+    end
+
+    ProtocolGame.registerOpcode(OPCODE, onHunt)
+    connect(LocalPlayer, { onExperienceChange = onExperienceChange })
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(LocalPlayer, { onExperienceChange = onExperienceChange })
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    onGameEnd()
+    for _, win in pairs(statsWindows) do win:destroy() end
+    statsWindows = {}
+    if pricesWindow then pricesWindow:destroy(); pricesWindow = nil end
+    if window then window:destroy(); window = nil end
+end

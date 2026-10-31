@@ -1,0 +1,191 @@
+// OTServ 7.4: ajustes de estilo para ficar igual ao cliente do Miracle.
+// Carregado depois dos estilos de data/styles (ordem alfabética).
+
+Button < UIButton
+  font: verdana-11px-antialised
+  color: #dfdfdfff
+  size: 43 22
+  text-offset: 0 0
+  image-source: /images/ui/buttons
+  image-clip: 0 0 43 20
+  image-border: 2
+  padding: 10
+  opacity: 1.0
+
+  $hover !disabled:
+    image-clip: 0 0 43 20
+
+  $pressed:
+    image-clip: 0 20 43 20
+    text-offset: 1 1
+
+  $on:
+    image-clip: 0 20 43 20
+    text-offset: 1 1
+
+  $checked:
+    image-clip: 0 20 43 20
+    text-offset: 1 1
+
+  $disabled:
+    color: #dfdfdf88
+    opacity: 0.8
+    change-cursor-image: false
+
+CheckBox < UICheckBox
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  size: 12 12
+  text-align: left
+  text-offset: 18 -1
+  image-rect: 0 0 12 12
+  image-source: /images/ui/checkbox
+  change-cursor-image: true
+  cursor: pointer
+
+  $!checked:
+    image-clip: 0 0 12 12
+
+  $checked:
+    image-clip: 0 12 12 12
+
+  $disabled:
+    color: #dfdfdf88
+    change-cursor-image: false
+
+// título das janelas em cinza (#afafaf), como no Miracle
+MainWindow < Window
+  anchors.centerIn: parent
+  color: #afafaf
+  text-offset: 0 3
+  padding-top: 29
+
+  $disabled:
+    color: #afafaf88
+
+// FPS e ping no canto do mapa (estilo Miracle)
+Classic74MapInfoLabel < Label
+  font: verdana-11px-rounded
+  color: #ffffff
+  text-auto-resize: true
+  margin-left: 16
+  margin-top: 4
+  phantom: true
+  focusable: false
+
+// botão Center do minimapa com a fonte do Miracle (a do estilo base é a pequena)
+MinimapResetButton < Button
+  !text: tr('Center')
+  font: verdana-11px-rounded
+  size: 50 20
+  anchors.left: parent.left
+  anchors.top: parent.top
+  margin: 4
+
+// texto dos campos centrado na altura (antes ficava colado em cima)
+TextEdit < UITextEdit
+  font: Verdana Bold-11px
+  color: #c0c0c0
+  padding-left: 3
+  height: 16
+  opacity: 1
+  text-align: left
+  image-source: /images/ui/textedit
+  image-border: 1
+  selection-background-color: #808080
+  cursor: none
+  blink-speed: 600
+  $disabled:
+    color: #27272788
+    opacity: 0.5
+
+PasswordTextEdit < TextEdit
+  text-hidden: true
+  font: pVerdana Bold-11px
+  color: #c0c0c0
+  padding-left: 3
+
+MultilineTextEdit < TextEdit
+  multiline: true
+  text-align: topLeft
+
+// caixas de mensagem (ex.: Exit): titulo sem transparencia e texto mais nitido
+MessageBoxWindow < UIMessageBox
+  icon-rect: 4 4 16 16
+  size: 246 116
+  image-source: /images/ui/window
+  image-border: 4
+  image-border-top: 16
+  image-border-bottom: 4
+  &minimizedHeight: 17
+  anchors.centerIn: parent
+  draggable: false
+
+  $on:
+    image-border-bottom: 2
+
+  UIWidget
+    id: miniwindowTopBar
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.left: parent.left
+    margin-right: 3
+    margin-left: 3
+    margin-top: 2
+    height: 18
+    phantom: true
+
+  Label
+    id: title
+    font: verdana-11px-antialised
+    text-offset: 0 2
+    text-align: top
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    color: #afafaf
+    margin-top: 3
+
+  Label
+    id: content
+    anchors.left: parent.left
+    anchors.top: parent.top
+    text-wrap: true
+    text-auto-resize: true
+    overflow-wrap: anywhere
+    font: verdana-11px-rounded
+    color: #dfdfdf
+    margin-left: 16
+    margin-top: 32
+
+  HorizontalSeparator
+    id: messageBoxSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: content.bottom
+    margin-top: 10
+    margin-right: 15
+    margin-left: 15
+
+  UIWidget
+    id: holder
+    anchors.right: prev.right
+    anchors.left: prev.left
+    anchors.top: prev.bottom
+    anchors.bottom: parent.bottom
+    margin-top: 12
+
+// Enfeite do canto de baixo a esquerda das janelas que vao nos paineis (como no
+// Miracle). Mesmo desenho e posicao da janela de Skills; some ao minimizar
+// (UIMiniWindow:minimize esconde o "miniborder").
+MiniWindowCorner74 < UIWidget
+  id: miniborder
+  anchors.bottom: parent.bottom
+  anchors.left: parent.left
+  image-source: /images/ui/miniborder
+  size: 14 14
+  margin-left: 2
+  margin-bottom: 2
+  phantom: true
+  focusable: false

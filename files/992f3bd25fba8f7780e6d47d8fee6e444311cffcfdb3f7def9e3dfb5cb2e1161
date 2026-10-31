@@ -1,0 +1,10 @@
+Module
+  name: game_livecam74
+  description: Cam ao vivo (Watch Cams do cliente do Miracle): liga a própria cam e o modo espectador, em que o cliente só assiste
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ livecam74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

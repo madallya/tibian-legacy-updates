@@ -1,0 +1,93 @@
+// Set items prices: Item | Loot Value | Use Value. Use Value (editável) passa por
+// cima do Loot Value (preço padrão do servidor) em todo o Hunt Analyzer.
+MainWindow
+  id: hunt74PricesWindow
+  size: 450 320
+  !text: tr('Set items prices')
+  @onEscape: modules.game_hunt74.closePrices()
+
+  Label
+    id: itemHeader
+    anchors.top: parent.top
+    anchors.left: parent.left
+    margin-left: 18
+    !text: tr('Item')
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+
+  Label
+    id: useHeader
+    anchors.top: parent.top
+    anchors.horizontalCenter: list.right
+    margin-left: -60
+    !text: tr('Use Value')
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+
+  Label
+    id: lootHeader
+    anchors.top: parent.top
+    anchors.horizontalCenter: list.right
+    margin-left: -182
+    !text: tr('Loot Value')
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+
+  ScrollablePanel
+    id: list
+    anchors.top: itemHeader.bottom
+    anchors.left: parent.left
+    anchors.right: listScroll.left
+    anchors.bottom: filter.top
+    margin-top: 4
+    margin-bottom: 8
+    vertical-scrollbar: listScroll
+    // fundo da janela; só a moldura em volta da lista
+    border-width: 1
+    border-color: #1d1d1d
+    padding: 1
+    layout:
+      type: verticalBox
+
+  VerticalScrollBar
+    id: listScroll
+    // ancorada no cabeçalho e no filtro, não na lista (a lista já se ancora
+    // na barra: os dois presos um no outro travavam o cliente)
+    anchors.top: itemHeader.bottom
+    anchors.bottom: filter.top
+    anchors.right: parent.right
+    margin-top: 4
+    margin-bottom: 8
+    step: 38
+    pixels-scroll: true
+
+  TextEdit
+    id: filter
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    width: 200
+    height: 20
+    placeholder: Search item...
+    @onTextChange: modules.game_hunt74.onPriceFilter(self:getText())
+
+  Label
+    id: info
+    anchors.left: filter.right
+    anchors.right: closeButton.left
+    anchors.verticalCenter: filter.verticalCenter
+    margin-left: 8
+    margin-right: 8
+    font: verdana-11px-antialised
+    color: #9d9d9d
+    text-wrap: false
+
+  Button
+    id: closeButton
+    width: 64
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    !text: tr('Close')
+    @onClick: modules.game_hunt74.closePrices()

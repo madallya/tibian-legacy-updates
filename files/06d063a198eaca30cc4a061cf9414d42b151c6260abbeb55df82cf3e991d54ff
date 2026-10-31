@@ -1,0 +1,10 @@
+Module
+  name: game_elite74
+  description: Elite creatures (Telmora): aura pulsante e estrelas abaixo da vida, pela "skull" 11-13 do servidor (src/game/elite.hh)
+  author: Telmora
+  website: -
+  sandboxed: true
+  scripts: [ elite74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

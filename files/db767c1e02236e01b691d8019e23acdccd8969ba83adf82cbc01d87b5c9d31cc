@@ -1,0 +1,1121 @@
+-- Ajustes de comportamento e de tela do cliente OTServ 7.4.
+-- Visual de referência: cliente do Miracle 7.4 (mesma base OTClient Redemption).
+-- As imagens e fontes vêm da pasta classic74 (que tem prioridade sobre data/ e modules/).
+
+local DEFAULTS_VERSION = 6
+local DISCORD_URL = Services and Services.discord or ''
+local TOP_MENU_WIDTH = 800
+
+-- Valores padrão aplicados só na primeira execução (o jogador pode mudar depois).
+local defaults = {
+    locale = 'en',                   -- 7.4 não tinha tela de escolha de idioma
+    statsbar_dimension = 'hide',     -- sem barras de HP/mana em cima do mapa
+    showLeftPanel = false,           -- 7.4: só a coluna da direita
+    showLeftExtraPanel = false,
+    showRightExtraPanel = true,
+    crosshair = 'disabled',
+    ambientLight = 0,
+    shadowFloorIntensity = 100,
+    floorViewMode = 0,
+    classicControl = true,           -- controle clássico (Tibia.cfg: ClassicControl = yes)
+    mouseControlMode = 1,
+    displayMana = false,             -- sem barra de mana em cima do personagem
+    displayHarmony = false,
+    showSpellGroupCooldowns = false,
+    graphicalCooldown = false,
+    showAnimatedCursor = false,
+    floatingEffect = false,
+    showHighlightedUnderline = false,
+    enableHighlightMouseTarget = false,
+    showExpiryInInvetory = false,
+    showExpiryInContainers = false,
+    -- sem círculos de vida/mana em volta do personagem
+    healthcircle_hpcircle = true,
+    healthcircle_mpcircle = true,
+    healthcircle_expcircle = false,
+    healthcircle_skillcircle = false,
+    -- sem barras de ação (não existiam no 7.4)
+    actionBarShowBottom1 = false,
+    actionBarShowBottom2 = false,
+    actionBarShowBottom3 = false,
+    actionBarShowLeft1 = false,
+    actionBarShowLeft2 = false,
+    actionBarShowLeft3 = false,
+    actionBarShowRight1 = false,
+    actionBarShowRight2 = false,
+    actionBarShowRight3 = false,
+    allActionBar13 = false,
+    allActionBar46 = false,
+}
+
+-- Padrões novos em versões seguintes: só as chaves novas, sem mexer no que o
+-- jogador já mudou.
+local defaultsByVersion = {
+    [2] = {
+        showRightExtraPanel = true, -- coluna extra à direita, como no Miracle
+        showFps = true,             -- FPS e ping no canto do mapa
+        showPing = true,
+    },
+    [3] = {
+        crosshair = 'disabled',     -- sem a mira azul no quadrado embaixo do mouse (nao existia no 7.4)
+        ambientLight = 25,          -- luz ambiente minima de 25%
+    },
+    [4] = {
+        floorViewMode = 0,          -- andar de cima some/aparece na hora, sem fade (como no 7.4)
+    },
+    [5] = {
+        -- circulos de vida/mana desligados (true = escondido). Quem instalou numa
+        -- build antiga ficou sem essas chaves; continuam na aba Interface das opcoes.
+        healthcircle_hpcircle = true,
+        healthcircle_mpcircle = true,
+        -- a opção antiga "Display players messages" escondia TODOS os textos do
+        -- mapa (g_app.setDrawTexts); a nova só esconde falas de jogadores
+        displayText = true,
+    },
+    [6] = {
+        -- comparado com o Miracle (26/10): no escuro só se vê em volta das fontes de
+        -- luz (o personagem tem um círculo pequeno). Com 25% as cavernas ficavam claras.
+        ambientLight = 0,
+        -- sem a sombra preta por cima do andar de baixo quando se está num andar de cima
+        -- (100 = sem sombra; o OTClient vinha com 30)
+        shadowFloorIntensity = 100,
+    },
+}
+
+local function applyFirstRunDefaults()
+    local version = g_settings.getNumber('classic74_defaults')
+    if version >= DEFAULTS_VERSION then
+        return
+    end
+    if version < 1 then
+        for key, value in pairs(defaults) do
+            g_settings.set(key, value)
+        end
+    end
+    for v = math.max(version + 1, 2), DEFAULTS_VERSION do
+        for key, value in pairs(defaultsByVersion[v] or {}) do
+            g_settings.set(key, value)
+        end
+    end
+    g_settings.set('classic74_defaults', DEFAULTS_VERSION)
+    g_settings.save()
+end
+
+local function hideWidget(root, id)
+    if not root then return end
+    local w = root:recursiveGetChildById(id)
+    if w then
+        w:setVisible(false)
+        if w.setWidth then w:setWidth(0) end
+    end
+end
+
+local function getTopMenu()
+    return modules.client_topmenu and modules.client_topmenu.getTopMenu and modules.client_topmenu.getTopMenu()
+end
+
+-- Tela de login ---------------------------------------------------------------
+
+-- Fundo ocupando a tela toda (corta o que sobra, sem distorcer), preso no topo
+-- para não cortar o logo da arte.
+local function fitBackground()
+    local bg = rootWidget and rootWidget:recursiveGetChildById('background')
+    if not bg then return end
+    local tw, th = bg:getImageTextureWidth(), bg:getImageTextureHeight()
+    local size = bg:getSize()
+    if tw <= 0 or th <= 0 or size.width <= 0 or size.height <= 0 then return end
+    local scale = math.max(size.width / tw, size.height / th)
+    local cw = math.floor(size.width / scale)
+    local ch = math.floor(size.height / scale)
+    bg:setImageClip({ x = math.floor((tw - cw) / 2), y = 0, width = cw, height = ch })
+    bg:setImageRect({ x = 0, y = 0, width = size.width, height = size.height })
+end
+
+local function setupTopMenu()
+    local topMenu = getTopMenu()
+    if not topMenu then return end
+    topMenu:setWidth(TOP_MENU_WIDTH)
+    topMenu:setMarginTop(2)
+    -- sem contador de jogadores, YouTube e streamers
+    for _, id in ipairs({ 'topLeftOnlinePlayers', 'topLeftYoutube' }) do
+        hideWidget(topMenu, id)
+    end
+    local discord = topMenu:recursiveGetChildById('topLeftDiscord')
+    if discord then
+        for _, child in ipairs(discord:getChildren()) do
+            if child:getId() ~= 'discordIcon' then child:hide() end
+        end
+        discord:setWidth(36)
+        local icon = discord:getChildById('discordIcon')
+        if icon then
+            icon:setSize({ width = 24, height = 27 })
+            icon:setTooltip(tr('Discord'))
+            icon.onClick = function()
+                if DISCORD_URL ~= '' then g_platform.openUrl(DISCORD_URL) end
+            end
+        end
+    end
+    -- direita: Favorite Accounts, Options, Exit (sem botão de áudio)
+    hideWidget(topMenu, 'audioButton')
+    local exitButton = topMenu:recursiveGetChildById('logoutButton')
+    if exitButton then
+        exitButton:setTooltip(tr('Exit'))
+        exitButton.onMouseRelease = function(widget, mousePos, mouseButton)
+            if widget:containsPoint(mousePos) and mouseButton == MouseLeftButton then
+                g_app.exit()
+                return true
+            end
+        end
+    end
+    if not topMenu:recursiveGetChildById('favoritesButton') then
+        modules.client_topmenu.addTopRightToggleButton('favoritesButton', tr('Favorite Accounts') .. ' (Ctrl+F)',
+            '/images/topbuttons/favorites', toggleFavorites, true)
+    end
+end
+
+local function setupEnterGame()
+    local enterGame = rootWidget:recursiveGetChildById('enterGame')
+    if not enterGame then return end
+    -- o entergame.lua redimensiona a janela ao fixar o servidor único
+    enterGame:setSize({ width = 257, height = 208 })
+    local accountEdit = enterGame:getChildById('accountNameTextEdit')
+    if accountEdit then accountEdit:setTextHidden(false) end
+    -- o entergame.lua troca os textos ("Acc Name:") ao iniciar
+    enterGame:setText(tr('Enter Game'))
+    enterGame:getChildById('emailLabel'):setText(tr('Email'))
+    enterGame:getChildById('rememberEmailBox'):setText(tr('Remember password'))
+    enterGame:getChildById('rememberEmailBox'):setMarginTop(10) -- setUniqueServer muda para 5
+    -- "Watch Cams": assistir ao vivo quem ligou a cam (ver watchLiveCams)
+    if EnterGame and not EnterGame.__classic74 then
+        local originalLogin = EnterGame.doLogin
+        EnterGame.doLogin = function(...)
+            local box = enterGame:getChildById('watchCamsBox')
+            if box and box:isChecked() then
+                return watchLiveCams(enterGame)
+            end
+            G.watchingCam = false
+            return originalLogin(...)
+        end
+        EnterGame.__classic74 = true
+    end
+    local watchBox = enterGame:getChildById('watchCamsBox')
+    if watchBox then
+        watchBox:setTooltip(tr('Watch other players playing live.\nEmail and password are not needed.'))
+    end
+end
+
+-- Watch Cams ------------------------------------------------------------------
+-- O servidor responde ao pedido de lista com a conta 0 e senha vazia com os
+-- jogadores que ligaram a cam (Options > Game). Cada um vem como um personagem;
+-- entrar nele abre a cam ao vivo (o modo espectador fica no game_livecam74).
+local watchLogin
+
+function watchLiveCams(enterGame)
+    if g_game.isOnline() then
+        local errorBox = displayErrorBox(tr('Watch Cams'), tr('Cannot login while already in game.'))
+        connect(errorBox, { onOk = EnterGame.show })
+        return
+    end
+
+    local host = enterGame:getChildById('serverHostTextEdit'):getText()
+    local port = tonumber(enterGame:getChildById('serverPortTextEdit'):getText()) or 7171
+    local clientVersion = tonumber(enterGame:getChildById('clientComboBox'):getText()) or 740
+
+    G.watchingCam = true
+    -- login cifrado com email e senha vazios = lista das cams; o espectador
+    -- entra no jogo com a conta 0
+    G.account = ''
+    G.gameAccount = '0'
+    G.password = ''
+    G.host = host
+    G.port = port
+    G.authenticatorToken = nil
+    G.sessionKey = nil
+
+    EnterGame.hide()
+    if watchLogin then watchLogin:cancelLogin() end
+    local protocol = ProtocolLogin.create()
+    watchLogin = protocol
+    local loadBox = displayCancelBox(tr('Please wait'), tr('Looking for live cams...'))
+    connect(loadBox, {
+        onCancel = function()
+            loadBox = nil
+            protocol:cancelLogin()
+            watchLogin = nil
+            G.watchingCam = false
+            EnterGame.show()
+        end
+    })
+
+    local function closeLoadBox()
+        if loadBox then
+            loadBox:destroy()
+            loadBox = nil
+        end
+    end
+
+    protocol.onLoginError = function(_, message)
+        closeLoadBox()
+        watchLogin = nil
+        G.watchingCam = false
+        local errorBox = displayErrorBox(tr('Watch Cams'), message)
+        connect(errorBox, { onOk = EnterGame.show })
+    end
+    protocol.onMotd = function() end
+    protocol.onSessionKey = function() end
+    protocol.onUpdateNeeded = function() end
+    protocol.onCharacterList = function(_, characters, account, otui)
+        closeLoadBox()
+        watchLogin = nil
+        -- o jogo fica no mesmo endereço do login
+        for _, character in pairs(characters) do
+            character.worldIp = host
+        end
+        CharacterList.create(characters, account, otui)
+        CharacterList.show()
+    end
+
+    g_game.setClientVersion(clientVersion)
+    g_game.setProtocolVersion(g_game.getClientProtocolVersion(clientVersion))
+    g_game.chooseRsa(host)
+    protocol:login(host, port, '0', '', nil, false)
+end
+
+-- Lista de personagens ----------------------------------------------------------
+-- O characterlist.lua do OTClient já tem o modo simples (nome + (mundo)); aqui só
+-- deixamos a janela com o tamanho, as cores e o texto do Miracle.
+local function styleCharacterList()
+    local window = rootWidget:recursiveGetChildById('charactersWindow')
+    if not window then return end
+    window:setSize({ width = 346, height = 396 })
+    local list = window:getChildById('characters')
+    if list then
+        list:setBackgroundColor('#565656')
+        for _, row in ipairs(list:getChildren()) do
+            row.rowColor = '#56565600'
+            local name = row:getChildById('name')
+            local world = row:getChildById('worldName')
+            if name then name:setFont('verdana-11px-antialised') end
+            if world then
+                world:setFont('verdana-11px-antialised')
+                world:setTextWrap(false)
+                world:setText(world:getText())
+                world:resizeToText()
+            end
+            row:setHeight(14)
+            row.updateOnStates = function(self)
+                local focused = self:isFocused()
+                for _, child in ipairs(self:getChildren()) do child:setOn(focused) end
+                self:setBackgroundColor(focused and '#6d6d6d' or '#56565600')
+                self:setBorderWidth(0)
+            end
+            row:updateOnStates()
+        end
+    end
+    local autoReconnect = window:getChildById('autoReconnect')
+    if autoReconnect then autoReconnect:hide() end
+    -- "Account Status:" à esquerda e o status à direita, na mesma linha
+    local caption = window:getChildById('accountStatusCaption')
+    local status = window:getChildById('accountStatusLabel')
+    local separator = window:getChildById('separator')
+    if caption and status and separator then
+        caption:breakAnchors()
+        caption:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        caption:addAnchor(AnchorBottom, 'separator', AnchorTop)
+        caption:setMarginBottom(6)
+        caption:setTextAutoResize(true)
+        status:breakAnchors()
+        status:addAnchor(AnchorRight, 'parent', AnchorRight)
+        status:addAnchor(AnchorBottom, 'separator', AnchorTop)
+        status:setMarginBottom(6)
+        status:setOn(false)
+        separator:setMarginBottom(8)
+        local account = G.characterAccount
+        if G.watchingCam then
+            -- lista do "Watch Cams": cada linha é um jogador com a cam ligada
+            window:setText(tr('Live Cams'))
+            caption:setText(tr('Live cams') .. ':')
+            status:setText(tostring(#(G.characters or {})))
+        elseif account then
+            window:setText(tr('Character List'))
+            caption:setText(tr('Account Status') .. ':')
+            local days = tonumber(account.premDays) or 0
+            if account.subStatus == SubscriptionStatus.Premium and days > 0 and days ~= 65535 then
+                status:setText(tr('Premium Account (%d) days left', days))
+            elseif account.subStatus == SubscriptionStatus.Premium then
+                status:setText(tr('Premium Account'))
+            else
+                status:setText(tr('Free Account'))
+            end
+        end
+        local list2 = window:getChildById('characters')
+        local scroll = window:getChildById('characterListScrollBar')
+        if list2 then list2:addAnchor(AnchorBottom, 'accountStatusCaption', AnchorTop); list2:setMarginBottom(8) end
+        if scroll then scroll:addAnchor(AnchorBottom, 'accountStatusCaption', AnchorTop); scroll:setMarginBottom(8) end
+    end
+end
+
+local function hookCharacterList()
+    if not CharacterList or CharacterList.__classic74 then return end
+    local originalCreate = CharacterList.create
+    CharacterList.create = function(...)
+        local result = originalCreate(...)
+        styleCharacterList()
+        return result
+    end
+    local originalRebuild = CharacterList.rebuildCharactersList
+    CharacterList.rebuildCharactersList = function(...)
+        local result = originalRebuild(...)
+        styleCharacterList()
+        return result
+    end
+    CharacterList.__classic74 = true
+end
+
+-- Contas favoritas -------------------------------------------------------------
+local favoritesWindow
+local favoriteAddWindow
+
+-- Guardado em config.otml como { f1 = {account, password}, f2 = ... } (conta e senha criptografadas).
+local function loadFavorites()
+    local node = g_settings.getNode('classic74_favorites') or {}
+    local keys = {}
+    for key, entry in pairs(node) do
+        local n = tonumber(tostring(key):match('^f(%d+)$'))
+        if n and type(entry) == 'table' and entry.account then table.insert(keys, n) end
+    end
+    table.sort(keys)
+    local result = {}
+    for _, n in ipairs(keys) do table.insert(result, node['f' .. n]) end
+    return result
+end
+
+local function saveFavorites(list)
+    local node = {}
+    for i, entry in ipairs(list) do
+        node['f' .. i] = { account = entry.account, password = entry.password }
+    end
+    g_settings.setNode('classic74_favorites', node)
+    g_settings.save()
+end
+
+local function refreshFavorites()
+    if not favoritesWindow then return end
+    local list = favoritesWindow:getChildById('accountList')
+    list:destroyChildren()
+    for index, entry in ipairs(loadFavorites()) do
+        local label = g_ui.createWidget('FavoriteAccountLabel', list)
+        label:setText(safeDecrypt(entry.account))
+        label.favoriteIndex = index
+    end
+    local function updateButtons()
+        local selected = list:getFocusedChild()
+        favoritesWindow:getChildById('loginButton'):setEnabled(selected ~= nil)
+        favoritesWindow:getChildById('removeButton'):setEnabled(selected ~= nil)
+    end
+    list.onChildFocusChange = updateButtons
+    updateButtons()
+end
+
+function showFavorites()
+    if g_game.isOnline() then return end
+    if favoritesWindow then
+        favoritesWindow:raise(); favoritesWindow:focus()
+        return
+    end
+    favoritesWindow = g_ui.displayUI('favorites')
+    favoritesWindow.onDestroy = function() favoritesWindow = nil end
+    if EnterGame and EnterGame.hide then EnterGame.hide() end
+    refreshFavorites()
+    favoritesWindow:show(); favoritesWindow:raise(); favoritesWindow:focus()
+end
+
+local function showEnterGameIfIdle()
+    local charList = CharacterList and CharacterList.isVisible and CharacterList.isVisible()
+    if not g_game.isOnline() and not charList and EnterGame and EnterGame.show then EnterGame.show() end
+end
+
+function closeFavorites()
+    if favoriteAddWindow then favoriteAddWindow:destroy(); favoriteAddWindow = nil end
+    if favoritesWindow then favoritesWindow:destroy(); favoritesWindow = nil end
+    showEnterGameIfIdle()
+end
+
+function toggleFavorites()
+    if favoritesWindow then closeFavorites() else showFavorites() end
+end
+
+function addFavorite()
+    if favoriteAddWindow then favoriteAddWindow:destroy() end
+    favoriteAddWindow = g_ui.displayUI('favoriteadd')
+    favoriteAddWindow.onDestroy = function() favoriteAddWindow = nil end
+    local enterGame = rootWidget:recursiveGetChildById('enterGame')
+    if enterGame then
+        favoriteAddWindow:getChildById('account'):setText(enterGame:getChildById('accountNameTextEdit'):getText())
+        favoriteAddWindow:getChildById('password'):setText(enterGame:getChildById('accountPasswordTextEdit'):getText())
+    end
+    favoriteAddWindow:getChildById('account'):focus()
+end
+
+function confirmAddFavorite()
+    if not favoriteAddWindow then return end
+    local account = favoriteAddWindow:getChildById('account'):getText()
+    local password = favoriteAddWindow:getChildById('password'):getText()
+    if #account == 0 then return end
+    local list = loadFavorites()
+    for i = #list, 1, -1 do
+        if safeDecrypt(list[i].account) == account then table.remove(list, i) end
+    end
+    table.insert(list, { account = g_crypt.encrypt(account), password = g_crypt.encrypt(password) })
+    saveFavorites(list)
+    favoriteAddWindow:destroy()
+    refreshFavorites()
+end
+
+local function selectedFavorite()
+    if not favoritesWindow then return end
+    local selected = favoritesWindow:getChildById('accountList'):getFocusedChild()
+    if not selected then return end
+    return loadFavorites()[selected.favoriteIndex], selected.favoriteIndex
+end
+
+function removeFavorite()
+    local _, index = selectedFavorite()
+    if not index then return end
+    local list = loadFavorites()
+    table.remove(list, index)
+    saveFavorites(list)
+    refreshFavorites()
+end
+
+function loginFavorite()
+    local entry = selectedFavorite()
+    if not entry then return end
+    local enterGame = rootWidget:recursiveGetChildById('enterGame')
+    if not enterGame then return end
+    enterGame:getChildById('accountNameTextEdit'):setText(safeDecrypt(entry.account))
+    enterGame:getChildById('accountPasswordTextEdit'):setText(safeDecrypt(entry.password))
+    favoritesWindow:destroy()
+    EnterGame.show() -- o doLogin esconde de novo; se não logar, a janela fica na tela
+    EnterGame.doLogin()
+end
+
+-- Cams locais -----------------------------------------------------------------
+-- O OTClient toca arquivos da pasta records\ (ao lado do executável) com
+-- g_game.playRecord. O servidor grava em cams/<id do personagem>/.
+local camWindow
+local recordsMounted = false
+local playingCam = false
+
+local function listCams()
+    if not recordsMounted then
+        recordsMounted = g_resources.addSearchPath(g_resources.getWorkDir() .. 'records', false) or false
+    end
+    local cams = {}
+    for _, file in ipairs(g_resources.listDirectoryFiles('/', false, false) or {}) do
+        if file:lower():match('%.cam$') then table.insert(cams, file) end
+    end
+    table.sort(cams, function(a, b) return a > b end)
+    return cams
+end
+
+function showCams()
+    if camWindow then camWindow:destroy() end
+    camWindow = g_ui.displayUI('camwindow')
+    camWindow.onDestroy = function() camWindow = nil end
+    if EnterGame and EnterGame.hide then EnterGame.hide() end
+    local list = camWindow:getChildById('camList')
+    local cams = listCams()
+    if #cams == 0 then
+        local label = g_ui.createWidget('CamListLabel', list)
+        label:setText(tr('No recordings found.'))
+        label:setEnabled(false)
+    end
+    for _, name in ipairs(cams) do
+        local label = g_ui.createWidget('CamListLabel', list)
+        label:setText(name)
+        label.camFile = name
+        label.onDoubleClick = function() playCam(name) end
+    end
+    camWindow:show(); camWindow:raise(); camWindow:focus()
+end
+
+function closeCams()
+    if camWindow then camWindow:destroy(); camWindow = nil end
+    showEnterGameIfIdle()
+end
+
+function openCamsFolder()
+    g_platform.openDir(g_resources.getWorkDir() .. 'records')
+end
+
+function isPlayingCam()
+    return playingCam
+end
+
+function playCam(file)
+    g_game.setClientVersion(740)
+    g_game.setProtocolVersion(g_game.getClientProtocolVersion(740))
+    if camWindow then camWindow:destroy(); camWindow = nil end
+    if EnterGame and EnterGame.hide then EnterGame.hide() end
+    playingCam = true
+    g_game.playRecord(file)
+end
+
+function playSelectedCam()
+    if not camWindow then return end
+    local selected = camWindow:getChildById('camList'):getFocusedChild()
+    if selected and selected.camFile then playCam(selected.camFile) end
+end
+
+local function setupLoginScreen()
+    local topMenu = getTopMenu()
+    if topMenu and not g_game.isOnline() then topMenu:show() end
+    setupTopMenu()
+    setupEnterGame()
+    hookCharacterList()
+    fitBackground()
+end
+
+
+-- Painel da direita (estilo Miracle) -----------------------------------------------
+-- Minimapa: o minimap.lua esconde os botões próprios do Minimap; no Miracle eles
+-- ficam por cima do mapa (Center, andar acima/abaixo, + e -).
+local function setupMinimap()
+    local minimap = modules.game_minimap and modules.game_minimap.getMiniMapUi and modules.game_minimap.getMiniMapUi()
+    if not minimap then return end
+    for _, id in ipairs({ 'floorUpButton', 'floorDownButton', 'zoomInButton', 'zoomOutButton', 'resetButton' }) do
+        local button = minimap:getChildById(id)
+        if button then button:show() end
+    end
+end
+
+-- Fileira de 6 botões (Hunt Analyzer, Cyclopedia, Bestiary Tracker, Quest Log,
+-- Quest Tracker, Highscore). Os que dependem do servidor mostram um aviso por
+-- enquanto.
+local panelButtonsWindow
+
+local function notAvailable(title)
+    displayInfoBox(tr(title), tr('This feature is not available yet.'))
+end
+
+local panelButtonList = {
+    { id = 'analyzer74', tip = 'Hunt Analyzer', icon = '/images/options/analyzers', action = function()
+        if modules.game_hunt74 and modules.game_hunt74.toggle then modules.game_hunt74.toggle()
+        else notAvailable('Hunt Analyzer') end
+    end },
+    { id = 'cyclopedia74', tip = 'Cyclopedia', icon = '/images/options/cooldowns', action = function()
+        if modules.game_cyclopedia74 and modules.game_cyclopedia74.toggle then modules.game_cyclopedia74.toggle()
+        else notAvailable('Cyclopedia') end
+    end },
+    { id = 'bestiaryTracker74', tip = 'Bestiary Tracker', icon = '/images/options/bestiaryTracker', action = function()
+        if modules.game_cyclopedia74 and modules.game_cyclopedia74.toggleTracker then modules.game_cyclopedia74.toggleTracker()
+        else notAvailable('Bestiary Tracker') end
+    end },
+    { id = 'questLog74', tip = 'Quest Log', icon = '/images/options/button_questlog', action = function()
+        if modules.game_questlog74 and modules.game_questlog74.toggle then modules.game_questlog74.toggle()
+        else notAvailable('Quest Log') end
+    end },
+    { id = 'questTracker74', tip = 'Quest Tracker', icon = '/images/options/button_questlog_tracker', action = function()
+        if modules.game_questlog74 and modules.game_questlog74.toggleTracker then modules.game_questlog74.toggleTracker()
+        else notAvailable('Quest Tracker') end
+    end },
+    { id = 'highscore74', tip = 'Highscore', icon = '/images/options/highscores', action = function()
+        if modules.game_highscore74 and modules.game_highscore74.toggle then modules.game_highscore74.toggle()
+        else notAvailable('Highscore') end
+    end },
+}
+
+function openStore()
+    notAvailable('Store')
+end
+
+-- Partes do painel da direita (minimapa, vida/mana, botoes, equipamento e
+-- Skills/Battle/VIP/Store): cada uma vai para qualquer coluna e em qualquer
+-- ordem, arrastando pela borda. A posicao fica salva por personagem.
+local bottomButtonsWindow
+local LAYOUT_KEY = 'classic74_layout'
+
+local function layoutParts()
+    local parts = {}
+    local mm = modules.game_minimap and modules.game_minimap.mapController and modules.game_minimap.mapController.ui
+    local hm = modules.game_healthinfo and modules.game_healthinfo.healthManaController and modules.game_healthinfo.healthManaController.ui
+    local inv = modules.game_inventory and modules.game_inventory.inventoryController and modules.game_inventory.inventoryController.ui
+    for _, w in ipairs({ mm, hm, panelButtonsWindow, inv, bottomButtonsWindow }) do
+        if w and not w:isDestroyed() then table.insert(parts, w) end
+    end
+    return parts
+end
+
+local function isColumn(widget)
+    return widget and not widget:isDestroyed() and widget:getClassName() == 'UIMiniWindowContainer'
+end
+
+function saveLayout()
+    local char = g_game.getCharacterName()
+    if not char or char == '' then return end
+    local node = g_settings.getNode(LAYOUT_KEY) or {}
+    local entry = node[char] or {}
+    for _, w in ipairs(layoutParts()) do
+        local parent = w:getParent()
+        if isColumn(parent) then
+            entry[w:getId()] = { parent = parent:getId(), index = parent:getChildIndex(w) }
+        end
+    end
+    node[char] = entry
+    node['_last'] = entry
+    g_settings.setNode(LAYOUT_KEY, node)
+end
+
+local function onPartDropped(widget)
+    if modules.game_mainpanel and modules.game_mainpanel.reloadMainPanelSizes then
+        modules.game_mainpanel.reloadMainPanelSizes()
+    end
+    -- fora do painel principal a parte guarda a propria altura
+    if widget.panelHeight then
+        local parent = widget:getParent()
+        if isColumn(parent) and parent:getId() ~= 'gameMainRightPanel' and widget:getId() ~= 'maininventorypanel' then
+            widget:setHeight(widget.panelHeight)
+        end
+    end
+    saveLayout()
+end
+
+local function restoreLayout()
+    local char = g_game.getCharacterName()
+    local node = g_settings.getNode(LAYOUT_KEY) or {}
+    local entry = node[char] or node['_last']
+    local root = modules.game_interface.getRootPanel()
+    local list = {}
+    for _, w in ipairs(layoutParts()) do
+        w.anyPanel = true
+        w.moveOnlyToMain = false
+        w:setPhantom(false)
+        w.onDropped = onPartDropped
+        local saved = entry and entry[w:getId()]
+        if saved and root then
+            local column = root:recursiveGetChildById(saved.parent)
+            if isColumn(column) and column:isVisible() then
+                table.insert(list, { widget = w, column = column, index = tonumber(saved.index) or 1 })
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.index < b.index end)
+    for _, item in ipairs(list) do
+        local w, column = item.widget, item.column
+        local parent = w:getParent()
+        if parent ~= column or column:getChildIndex(w) ~= item.index then
+            if parent then parent:removeChild(w) end
+            column:insertChild(math.min(item.index, column:getChildCount() + 1), w)
+        end
+        if column:getId() ~= 'gameMainRightPanel' and w.panelHeight and w:getId() ~= 'maininventorypanel' then
+            w:setHeight(w.panelHeight)
+        end
+    end
+    if modules.game_mainpanel and modules.game_mainpanel.reloadMainPanelSizes then
+        modules.game_mainpanel.reloadMainPanelSizes()
+    end
+end
+
+local function setupPanelButtons()
+    local mainPanel = modules.game_interface and modules.game_interface.getMainRightPanel and modules.game_interface.getMainRightPanel()
+    if not mainPanel then return end
+    if not panelButtonsWindow then
+        panelButtonsWindow = g_ui.loadUI('panelbuttons', mainPanel)
+        local row = panelButtonsWindow:getChildById('buttons')
+        for _, def in ipairs(panelButtonList) do
+            local button = g_ui.createWidget('Classic74IconButton', row)
+            button:setId(def.id)
+            button:setImageSource(def.icon)
+            button:setTooltip(tr(def.tip))
+            button.onClick = def.action or function() notAvailable(def.tip) end
+        end
+    end
+    -- primeira vez: botoes logo abaixo de vida/mana e Skills/Battle/VIP/Store
+    -- logo abaixo do equipamento (depois vale a ordem salva)
+    if not panelButtonsWindow.placed74 then
+        panelButtonsWindow.placed74 = true
+        local health = mainPanel:getChildById('mainhealthmanapanel')
+        local index = health and mainPanel:getChildIndex(health) or 2
+        mainPanel:moveChildToIndex(panelButtonsWindow, index + 1)
+    end
+    if not bottomButtonsWindow then
+        bottomButtonsWindow = g_ui.loadUI('bottombuttons', mainPanel)
+        local inventory = mainPanel:getChildById('maininventorypanel')
+        if inventory then
+            mainPanel:moveChildToIndex(bottomButtonsWindow, mainPanel:getChildIndex(inventory) + 1)
+        end
+    end
+    restoreLayout()
+    -- o painel de botões do Tibia 12 (store grande, ícones) sai; os botões
+    -- ficam no inventário
+    local options = mainPanel:getChildById('mainoptionspanel')
+    if options then
+        options:hide()
+        if not options.__classic74 then
+            options.__classic74 = true
+            -- a visão estendida (Ctrl+.) mostra o painel de novo ao sair dela
+            connect(options, { onVisibilityChange = function(widget, visible)
+                if visible then scheduleEvent(function() widget:hide() end, 1) end
+            end })
+        end
+    end
+    if modules.game_mainpanel and modules.game_mainpanel.reloadMainPanelSizes then
+        modules.game_mainpanel.reloadMainPanelSizes()
+    end
+end
+
+-- Chat ----------------------------------------------------------------------------
+-- Como no Miracle: abas Default e Server Log, caixinha à esquerda para andar com
+-- ASDW (no lugar do botão "Chat On/Off"), sem o painel de leitura dividido.
+local asdwBox
+
+-- O cliente vem sem WASD: so com "Enable WSAD walking" ligado em Options a
+-- caixinha aparece e o chat pode ser desligado para andar com WASD.
+local function wsadEnabled()
+    local key = 'classic74_wsadWalking'
+    return g_settings.exists(key) and g_settings.getBoolean(key)
+end
+
+local function syncAsdwBox()
+    local console = modules.game_console
+    if not asdwBox or not console or not console.consoleToggleChat then return end
+    local walking = console.consoleToggleChat.isChecked == true
+    if asdwBox:isChecked() ~= walking then
+        asdwBox.syncing = true
+        asdwBox:setChecked(walking)
+        asdwBox.syncing = false
+    end
+end
+
+function updateChatToggle()
+    local console = modules.game_console
+    if not asdwBox or not console then return end
+    local enabled = wsadEnabled()
+    asdwBox:setVisible(enabled)
+    -- com WASD ligado, o Enter alterna como no Tibia: Enter abre o chat para uma
+    -- mensagem (Chat On*), Enter envia e volta a andar; Enter vazio tambem volta
+    if modules.client_options and modules.client_options.getOption
+            and modules.client_options.getOption('returnDisablesChat') ~= enabled then
+        modules.client_options.setOption('returnDisablesChat', enabled)
+    end
+    -- opção desligada: volta para o modo chat
+    if not enabled and console.consoleToggleChat and console.consoleToggleChat.isChecked == true then
+        console.toggleChat()
+    end
+    syncAsdwBox()
+end
+
+local function setupConsole()
+    local console = modules.game_console
+    local panel = rootWidget:recursiveGetChildById('consolePanel')
+    if not console or not panel then return end
+
+    -- 7.4 não tem cooldown de grupo de magias: a faixa escondida do cooldown
+    -- ficava com 10 px e empurrava o chat para baixo (sobrava fundo entre o
+    -- mapa e as abas). Escondida = 0 px.
+    local cooldown = modules.game_cooldown
+    if cooldown and cooldown.setSpellGroupCooldownsVisible and not cooldown.__classic74 then
+        local original = cooldown.setSpellGroupCooldownsVisible
+        cooldown.setSpellGroupCooldownsVisible = function(visible)
+            original(visible)
+            if not visible and cooldown.cooldownWindow then cooldown.cooldownWindow:setHeight(0) end
+        end
+        cooldown.__classic74 = true
+    end
+    if cooldown and cooldown.cooldownWindow and not cooldown.cooldownWindow:isVisible() then
+        cooldown.cooldownWindow:setHeight(0)
+    end
+
+    -- Default antes do Server Log
+    local tabBar = panel:getChildById('consoleTabBar')
+    local default = console.defaultTab
+    if tabBar and default and tabBar.tabs then
+        for i, tab in ipairs(tabBar.tabs) do
+            if tab == default and i > 1 then tabBar:moveTab(default, -(i - 1)) end
+        end
+    end
+
+    -- sem leitura dividida, exiva (não existe no 7.4) e botão Chat On/Off
+    for _, id in ipairs({ 'readOnlyButton', 'readOnlyPanel', 'exivaOption', 'toggleChat' }) do
+        local w = panel:getChildById(id)
+        if w then w:hide(); w:setWidth(0) end
+    end
+    local content = panel:getChildById('consoleContentPanel')
+    if content then
+        content:removeAnchor(AnchorRight)
+        content:addAnchor(AnchorRight, 'parent', AnchorRight)
+        content:setMarginRight(4)
+    end
+    local ignore = panel:getChildById('ignoreButton')
+    if ignore then
+        ignore:removeAnchor(AnchorRight)
+        ignore:addAnchor(AnchorRight, 'parent', AnchorRight)
+        ignore:setMarginRight(5)
+    end
+    -- como no Miracle: [<] nas abas a esquerda; [>] [x] [limpar] [canais] [ignorar]
+    -- a direita. As setas trocam de canal (em roda), sempre ligadas.
+    local function consoleButton(id, row, tooltip, onClick)
+        local button = panel:getChildById(id)
+        if button then return button end
+        button = g_ui.createWidget('UIButton', panel)
+        button:setId(id)
+        button:setSize({ width = 16, height = 16 })
+        button:setImageSource('/images/ui/console_buttons74')
+        button:setImageClip({ x = 0, y = row * 16, width = 16, height = 16 })
+        button:setTooltip(tr(tooltip))
+        button.onMousePress = function(self) self:setImageClip({ x = 16, y = row * 16, width = 16, height = 16 }) end
+        button.onMouseRelease = function(self) self:setImageClip({ x = 0, y = row * 16, width = 16, height = 16 }) end
+        button.onClick = onClick
+        return button
+    end
+    local function switchTab(next)
+        local bar = panel:getChildById('consoleTabBar')
+        if not bar or not bar.tabs or #bar.tabs < 2 then return end
+        local current = bar:getCurrentTab()
+        local index = 1
+        for i, tab in ipairs(bar.tabs) do if tab == current then index = i end end
+        index = next and (index % #bar.tabs + 1) or ((index - 2) % #bar.tabs + 1)
+        bar:selectTab(bar.tabs[index])
+    end
+    for _, id in ipairs({ 'prevChannelButton', 'nextChannelButton' }) do
+        local w = panel:getChildById(id)
+        if w then w:hide(); w:setWidth(0) end
+    end
+    local close = panel:getChildById('closeChannelButton')
+    local channels = panel:getChildById('channelsButton')
+    if close and channels then
+        local clear = consoleButton('clearChannel74', 2, 'Clear messages', function()
+            local bar = panel:getChildById('consoleTabBar')
+            if bar and bar:getCurrentTab() then modules.game_console.clearChannel(bar) end
+        end)
+        clear:breakAnchors()
+        clear:addAnchor(AnchorRight, 'channelsButton', AnchorLeft)
+        clear:addAnchor(AnchorBottom, 'consoleContentPanel', AnchorTop)
+        clear:setMarginRight(1)
+        clear:setMarginBottom(5)
+        close:removeAnchor(AnchorRight)
+        close:addAnchor(AnchorRight, 'clearChannel74', AnchorLeft)
+        local nextButton = consoleButton('nextChannel74', 0, 'Next channel', function() switchTab(true) end)
+        nextButton:breakAnchors()
+        nextButton:addAnchor(AnchorRight, 'closeChannelButton', AnchorLeft)
+        nextButton:addAnchor(AnchorBottom, 'consoleContentPanel', AnchorTop)
+        nextButton:setMarginRight(1)
+        nextButton:setMarginBottom(5)
+        local prevButton = consoleButton('prevChannel74', 1, 'Previous channel', function() switchTab(false) end)
+        prevButton:breakAnchors()
+        prevButton:addAnchor(AnchorTop, 'consoleTabBar', AnchorTop)
+        prevButton:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        prevButton:setMarginTop(1)
+        prevButton:setMarginLeft(20)
+        if tabBar then
+            tabBar:removeAnchor(AnchorRight)
+            tabBar:addAnchor(AnchorRight, 'nextChannel74', AnchorLeft)
+            tabBar:setMarginRight(4)
+        end
+    end
+
+    local textEdit = panel:getChildById('consoleTextEdit')
+    if textEdit then
+        textEdit:removeAnchor(AnchorRight)
+        textEdit:addAnchor(AnchorRight, 'parent', AnchorRight)
+        textEdit:setMarginRight(4)
+        textEdit:mergeStyle({ ['placeholder-color'] = 'alpha' }) -- sem "Type here to chat"
+    end
+
+    -- caixinha do modo ASDW
+    if not asdwBox then
+        asdwBox = g_ui.createWidget('CheckBox', panel)
+        asdwBox:setId('asdwBox74')
+        asdwBox:setTooltip(tr('Disable chat mode, allow to walk using ASDW'))
+        asdwBox:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        asdwBox:addAnchor(AnchorTop, 'consoleTabBar', AnchorTop)
+        asdwBox:setMarginTop(3)
+        asdwBox:setMarginLeft(4)
+        asdwBox.onCheckChange = function(self, checked)
+            if self.syncing then return end
+            local c = modules.game_console
+            if c and c.consoleToggleChat and (c.consoleToggleChat.isChecked == true) ~= checked then
+                c.toggleChat()
+            end
+        end
+        if tabBar then tabBar:setMarginLeft(38) end
+        -- o toggleChat do console também é chamado pelo Enter: mantém a caixinha certa
+        if not console.__classic74 then
+            local originalToggle = console.toggleChat
+            console.__classic74Toggle = originalToggle
+            console.toggleChat = function(...)
+                -- WASD desligado em Options: nada (Esc, Enter, hotkey, botao
+                -- do NPC) tira o chat; so volta para o chat se estava sem
+                local c = modules.game_console
+                if not wsadEnabled() and c.consoleToggleChat and c.consoleToggleChat.isChecked ~= true then
+                    return
+                end
+                local result = originalToggle(...)
+                syncAsdwBox()
+                return result
+            end
+            console.__classic74 = true
+        end
+    end
+    updateChatToggle()
+end
+
+-- FPS e ping no canto do mapa ------------------------------------------------------
+local fpsLabel, pingLabel
+
+local function setupFpsPing()
+    local mapPanel = modules.game_interface and modules.game_interface.getMapPanel and modules.game_interface.getMapPanel()
+    if not mapPanel then return end
+    -- o indicador "Low lag (x ms)" / "x fps" do topmenu sai
+    for _, id in ipairs({ 'ping', 'fps' }) do
+        local w = mapPanel:recursiveGetChildById(id)
+        local root = w and w:getParent() and w:getParent():getParent()
+        if root and root ~= mapPanel then root:hide() end
+    end
+    if not fpsLabel then
+        fpsLabel = g_ui.createWidget('Classic74MapInfoLabel', mapPanel)
+        fpsLabel:setId('fps74')
+        fpsLabel:addAnchor(AnchorTop, 'parent', AnchorTop)
+        fpsLabel:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        pingLabel = g_ui.createWidget('Classic74MapInfoLabel', mapPanel)
+        pingLabel:setId('ping74')
+        pingLabel:addAnchor(AnchorTop, 'fps74', AnchorBottom)
+        pingLabel:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        pingLabel:setMarginTop(0)
+        pingLabel:setColor('#00ff00')
+    end
+    fpsLabel:setVisible(modules.client_options.getOption('showFps'))
+    pingLabel:setVisible(false) -- só aparece quando chega a primeira resposta de ping
+end
+
+local function onFps(fps)
+    if not fpsLabel then return end
+    local show = g_game.isOnline() and modules.client_options.getOption('showFps')
+    fpsLabel:setVisible(show)
+    if show then fpsLabel:setText('FPS: ' .. fps) end
+end
+
+local function onPingBack(ping)
+    if not pingLabel then return end
+    local show = modules.client_options.getOption('showPing')
+    pingLabel:setVisible(show)
+    if not show then return end
+    if ping < 0 then
+        pingLabel:setText('Ping: ??')
+        pingLabel:setColor('#ffff00')
+    else
+        pingLabel:setText('Ping: ' .. ping .. ' ms')
+        pingLabel:setColor(ping >= 500 and '#ff3030' or (ping >= 250 and '#ffff00' or '#00ff00'))
+    end
+end
+
+-- Dentro do jogo --------------------------------------------------------------
+-- Barras de acao laterais vazias ficam com 1 px de largura e a borda delas
+-- (escura a esquerda, clara a direita) aparecia colada na moldura do mapa,
+-- parecendo duas molduras em conflito. Sem barra, sem borda.
+local function fixActionPanelBorders()
+    local gi = modules.game_interface
+    if not gi or not gi.getLeftActionPanel then return end
+    local function apply(panel, side)
+        if not panel or panel:isDestroyed() then return end
+        local empty = panel:getWidth() <= 2
+        -- vazia: nao desenha nada por cima da moldura do mapa (fundo nem borda)
+        panel:setOpacity(empty and 0 or 1)
+        if side == 'left' then
+            panel:setBorderWidthRight(empty and 0 or 1)
+        else
+            panel:setBorderWidthLeft(empty and 0 or 1)
+        end
+    end
+    for side, panel in pairs({ left = gi.getLeftActionPanel(), right = gi.getRightActionPanel() }) do
+        if panel and not panel.__classic74Border then
+            panel.__classic74Border = true
+            connect(panel, { onGeometryChange = function() apply(panel, side) end })
+        end
+        apply(panel, side)
+    end
+end
+
+local function stripGameScreen()
+    fixActionPanelBorders()
+    setupMinimap()
+    setupPanelButtons()
+    setupConsole()
+    setupFpsPing()
+    local topMenu = getTopMenu()
+    if topMenu then topMenu:setVisible(false) end
+    -- 7.4 não tinha soul points
+    hideWidget(rootWidget, 'soulPanel')
+    local skills = rootWidget:recursiveGetChildById('skillWindow')
+    local skillSoul = skills and skills:recursiveGetChildById('soul')
+    if skillSoul then skillSoul:hide() end
+    local soulCap = rootWidget:recursiveGetChildById('soulAndCapacity')
+    if soulCap then
+        for _, child in ipairs(soulCap:getChildren()) do
+            if child:getId() == 'soul' or child:getText() == tr('Soul') then child:setVisible(false) end
+        end
+    end
+end
+
+local function onGameStart()
+    -- entrou no jogo (login, reconexão ou cam): nenhuma janela da tela de login fica por cima
+    if EnterGame and EnterGame.hide then EnterGame.hide() end
+    if camWindow then camWindow:destroy(); camWindow = nil end
+    if favoriteAddWindow then favoriteAddWindow:destroy(); favoriteAddWindow = nil end
+    if favoritesWindow then favoritesWindow:destroy(); favoritesWindow = nil end
+    scheduleEvent(stripGameScreen, 100)
+end
+
+local function onRootGeometryChange()
+    scheduleEvent(fitBackground, 1)
+end
+
+local function onGameEnd()
+    scheduleEvent(function()
+        setupLoginScreen()
+        -- fim de uma cam: volta para o Enter Game. Numa queda de conexão quem
+        -- decide é a lista de personagens/reconexão do próprio cliente.
+        if playingCam then
+            playingCam = false
+            showEnterGameIfIdle()
+        end
+    end, 300)
+end
+
+function init()
+    applyFirstRunDefaults()
+    connect(rootWidget, { onGeometryChange = onRootGeometryChange })
+    connect(g_game, {
+        onGameStart = onGameStart,
+        onGameEnd = onGameEnd,
+        onPingBack = onPingBack
+    })
+    connect(g_app, { onFps = onFps })
+    Keybind.new('Misc.', 'Favorite Accounts', 'Ctrl+F', '')
+    Keybind.bind('Misc.', 'Favorite Accounts', {
+        { type = KEY_DOWN, callback = function() if not g_game.isOnline() then toggleFavorites() end end }
+    })
+    -- 7.4 sem som: tira o atalho de mudo (religaria o audio) da lista de atalhos
+    scheduleEvent(function() Keybind.delete('Sound', 'Mute/unmute') end, 100)
+    scheduleEvent(setupLoginScreen, 250)
+end
+
+function terminate()
+    disconnect(g_app, { onFps = onFps })
+    disconnect(rootWidget, { onGeometryChange = onRootGeometryChange })
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd, onPingBack = onPingBack })
+    Keybind.delete('Misc.', 'Favorite Accounts')
+    if camWindow then camWindow:destroy(); camWindow = nil end
+    if favoriteAddWindow then favoriteAddWindow:destroy(); favoriteAddWindow = nil end
+    if favoritesWindow then favoritesWindow:destroy(); favoritesWindow = nil end
+    for _, w in ipairs({ panelButtonsWindow, bottomButtonsWindow, fpsLabel, pingLabel, asdwBox }) do
+        if w and not w:isDestroyed() then w:destroy() end
+    end
+    panelButtonsWindow, bottomButtonsWindow, fpsLabel, pingLabel, asdwBox = nil, nil, nil, nil, nil
+    local console = modules.game_console
+    if console and console.__classic74 then
+        console.toggleChat = console.__classic74Toggle
+        console.__classic74, console.__classic74Toggle = nil, nil
+    end
+end

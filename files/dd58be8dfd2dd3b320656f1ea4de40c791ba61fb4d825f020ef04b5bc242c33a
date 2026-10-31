@@ -1,0 +1,599 @@
+-- Funções das opções do cliente do Miracle que o OTClient não tem.
+-- Tudo aqui é ligado/desligado pelas opções classic74_* (options74.lua) e
+-- desfeito no terminate(), sem mexer nos arquivos dos outros módulos.
+--
+-- Obs.: cada vez que o C++ entrega um objeto ao Lua é criado um userdata novo,
+-- então o mesmo Item buscado duas vezes não é rawequal nem serve de chave de
+-- tabela; '==' compara o objeto C++ e funciona. Por isso os corpos são
+-- guardados por posição + id e comparados com '=='.
+
+local hooks = {}             -- funções originais trocadas aqui (para restaurar)
+local hookedConsole = nil    -- tabela do game_console que recebeu os ganchos
+local lastCorpseContainerId = nil
+local minimapPanels = {}     -- painéis horizontais do minimapa (left/right)
+local minimapHome = nil      -- onde o minimapa estava antes de ir para o painel
+local newCorpses = {}        -- corpos novos brilhando: { item, key, expires }
+local knownCorpses = {}      -- chave posição:id -> expira (containers que caíram numa morte)
+local corpseEvent = nil
+local originalWalkMaxSteps = nil
+local widthWatchers = {}     -- colunas observadas para refazer a largura do painel
+
+local CORPSE_SHADER = 'Item - New Corpse'
+local CORPSE_GLOW_MS = 5 * 60 * 1000
+local CORPSE_MEMORY_MS = 10 * 60 * 1000
+local corpseShaderReady = false
+
+local function custom(key)
+    return getCustom(key)
+end
+
+local function posKey(pos)
+    return pos.x .. ',' .. pos.y .. ',' .. pos.z
+end
+
+local function corpseKey(item)
+    local pos = item and item:getPosition()
+    if not pos or pos.x == 65535 then return nil end
+    return posKey(pos) .. ':' .. item:getId()
+end
+
+local function isKnownCorpse(item)
+    local key = corpseKey(item)
+    local expires = key and knownCorpses[key]
+    return expires ~= nil and expires > g_clock.millis()
+end
+
+-- Console ------------------------------------------------------------------------
+-- "You lose 10 hitpoints due to an attack by a rat." / "You lose 5 mana."
+local function isOwnDamageMessage(text)
+    return type(text) == 'string' and
+        (text:find('^You lose %d+ hitpoint') ~= nil or text:find('^You lose %d+ mana') ~= nil)
+end
+
+local function hookConsole()
+    local console = modules.game_console
+    if not console or hookedConsole == console then return end
+    if hookedConsole then return end -- o console foi recarregado; não mexe no novo
+
+    hookedConsole = console
+    hooks.addText = console.addText
+    console.addText = function(text, speaktype, tabName, creatureName)
+        if not custom('ownDamageMessages') and isOwnDamageMessage(text) then
+            return
+        end
+        return hooks.addText(text, speaktype, tabName, creatureName)
+    end
+
+    hooks.addPrivateText = console.addPrivateText
+    console.addPrivateText = function(text, speaktype, name, isPrivateCommand, creatureName)
+        -- mensagem privada recebida abre a aba de quem mandou
+        if custom('openChatOnPrivate') and not isPrivateCommand and type(speaktype) == 'table' and
+            not speaktype.npcChat and name and console.getTab(name) == nil then
+            console.addTab(name, false)
+            if type(console.channels) == 'table' then console.channels[name] = name end
+        end
+        return hooks.addPrivateText(text, speaktype, name, isPrivateCommand, creatureName)
+    end
+end
+
+local function unhookConsole()
+    if hookedConsole and modules.game_console == hookedConsole then
+        if hooks.addText then hookedConsole.addText = hooks.addText end
+        if hooks.addPrivateText then hookedConsole.addPrivateText = hooks.addPrivateText end
+    end
+    hookedConsole = nil
+    hooks.addText, hooks.addPrivateText = nil, nil
+end
+
+-- Falas em cima dos personagens: "Display self character messages" e
+-- "Display players messages". No 7.4 os NPCs também falam com Say, então quem
+-- decide é a criatura que está falando (só jogadores são filtrados).
+local playerSpeechModes = {
+    [MessageModes.Say] = true,
+    [MessageModes.Whisper] = true,
+    [MessageModes.Yell] = true,
+    [MessageModes.Spell] = true,
+}
+
+local function speakerIsPlayer(name, pos)
+    if name == g_game.getCharacterName() then return true end
+    local tile = pos and g_map.getTile(pos)
+    if tile then
+        for _, creature in ipairs(tile:getCreatures()) do
+            if creature:getName() == name then return creature:isPlayer() end
+        end
+    end
+    return false -- não achou: na dúvida mostra
+end
+
+local function hookStaticTexts()
+    if hooks.addStaticText then return end
+    hooks.addStaticText = g_map.addStaticText
+    g_map.addStaticText = function(staticText, pos)
+        if staticText and staticText.getMessageMode and playerSpeechModes[staticText:getMessageMode()] then
+            local name = staticText:getName()
+            if name == g_game.getCharacterName() then
+                if not custom('displaySelfMessages') then return end
+            elseif not custom('displayPlayersMessages') and speakerIsPlayer(name, pos) then
+                return
+            end
+        end
+        return hooks.addStaticText(staticText, pos)
+    end
+end
+
+local function unhookStaticTexts()
+    if hooks.addStaticText then
+        g_map.addStaticText = hooks.addStaticText
+        hooks.addStaticText = nil
+    end
+end
+
+-- Corpos novos -------------------------------------------------------------------
+-- "Show brand-new corpse shader": o corpo que acabou de cair brilha até ser
+-- aberto (ou por alguns minutos), para saber qual ainda não foi saqueado.
+local function registerCorpseShader()
+    if corpseShaderReady then return end
+    local path = resolvepath('newcorpse.frag')
+    if path then
+        g_shaders.createFragmentShader(CORPSE_SHADER, path, false)
+        g_shaders.setupItemShader(CORPSE_SHADER)
+        corpseShaderReady = true
+    end
+end
+
+local function clearCorpse(index)
+    local entry = newCorpses[index]
+    if entry and entry.item then entry.item:setShader('') end
+    table.remove(newCorpses, index)
+end
+
+function clearAllCorpseShaders()
+    for i = #newCorpses, 1, -1 do clearCorpse(i) end
+end
+
+local function forgetOpenedCorpse(item)
+    for i = #newCorpses, 1, -1 do
+        if newCorpses[i].item == item then clearCorpse(i) end
+    end
+end
+
+local function containersOn(pos)
+    local list = {}
+    local tile = g_map.getTile(pos)
+    if not tile then return list end
+    for _, item in ipairs(tile:getItems()) do
+        if item:isContainer() then table.insert(list, item) end
+    end
+    return list
+end
+
+local function contains(list, item)
+    for _, other in ipairs(list) do
+        if other == item then return true end
+    end
+    return false
+end
+
+local function onCreatureDeath(creature)
+    if creature:isLocalPlayer() then return end
+    local pos = creature:getPosition()
+    if not pos then return end
+    local before = containersOn(pos)
+    local tries = 0
+    local function look()
+        tries = tries + 1
+        for _, item in ipairs(containersOn(pos)) do
+            if not contains(before, item) then
+                local key = corpseKey(item)
+                if key then knownCorpses[key] = g_clock.millis() + CORPSE_MEMORY_MS end
+                if custom('corpseShader') and corpseShaderReady then
+                    item:setShader(CORPSE_SHADER)
+                    table.insert(newCorpses, { item = item, expires = g_clock.millis() + CORPSE_GLOW_MS })
+                end
+                return
+            end
+        end
+        if tries < 6 then scheduleEvent(look, 150) end
+    end
+    scheduleEvent(look, 50)
+end
+
+local function expireCorpses()
+    local now = g_clock.millis()
+    for i = #newCorpses, 1, -1 do
+        if now >= newCorpses[i].expires then clearCorpse(i) end
+    end
+    for key, expires in pairs(knownCorpses) do
+        if now >= expires then knownCorpses[key] = nil end
+    end
+end
+
+function applyCorpseShader()
+    if not custom('corpseShader') then clearAllCorpseShaders() end
+end
+
+-- Game ---------------------------------------------------------------------------
+-- "Lock new corpses container": corpo novo (de uma criatura que morreu na tela)
+-- abre na mesma janela do corpo anterior, em vez de empilhar janelas na caçada.
+local function isGroundCorpse(item)
+    if not item or not item:isContainer() or item:getParentContainer() then return false end
+    return isKnownCorpse(item)
+end
+
+local function lastCorpseWindow()
+    if not lastCorpseContainerId then return nil end
+    local container = g_game.getContainer(lastCorpseContainerId)
+    local containerItem = container and container:getContainerItem()
+    -- a janela ainda tem que ser de um corpo no chão (o id pode ter sido
+    -- reaproveitado por uma mochila depois que o corpo fechou)
+    if containerItem and isGroundCorpse(containerItem) then
+        return container
+    end
+    lastCorpseContainerId = nil
+    return nil
+end
+
+local function onContainerClose(container)
+    if container and container:getId() == lastCorpseContainerId then
+        lastCorpseContainerId = nil
+    end
+end
+
+local function hookContainerOpen()
+    if hooks.open then return end
+    hooks.open = g_game.open
+    g_game.open = function(item, previousContainer)
+        if item and #newCorpses > 0 then forgetOpenedCorpse(item) end
+        if not previousContainer and custom('lockCorpses') and isGroundCorpse(item) then
+            local last = lastCorpseWindow()
+            if last then
+                return hooks.open(item, last)
+            end
+            local id = hooks.open(item, previousContainer)
+            if id and id >= 0 then lastCorpseContainerId = id end
+            return id
+        end
+        return hooks.open(item, previousContainer)
+    end
+end
+
+local function unhookContainerOpen()
+    if hooks.open then
+        g_game.open = hooks.open
+        hooks.open = nil
+    end
+end
+
+-- "Enable smooth walking": um passo a mais pode seguir antes de o servidor
+-- confirmar o anterior, então o personagem não para entre passos quando o ping
+-- oscila (o servidor continua validando cada passo). Desligado = padrão do cliente.
+function applySmoothWalking()
+    if originalWalkMaxSteps == nil then originalWalkMaxSteps = g_game.getWalkMaxSteps() end
+    g_game.setWalkMaxSteps(originalWalkMaxSteps + (custom('smoothWalking') and 1 or 0))
+end
+
+-- Interface ----------------------------------------------------------------------
+function applyCreatureDrawing()
+    Creature.setDrawPlayerBars(custom('displayPlayerHealth'))
+    Creature.setDrawCreatureIcons(custom('creatureIcons'))
+end
+
+-- "Container's panel": coluna onde as janelas novas (mochilas, corpos) abrem
+-- (o valor e o indice em game_interface.panelsList)
+containerPanelOptions = {
+    { text = '1st right panel', value = 1 },
+    { text = '2nd right panel', value = 2 },
+    { text = '3rd right panel', value = 5 },
+    { text = '1st left panel', value = 3 },
+    { text = '2nd left panel', value = 4 },
+    { text = '3rd left panel', value = 6 },
+}
+
+-- opcoes que abrem cada coluna (as anteriores daquele lado abrem junto)
+local panelOptions = {
+    [2] = { 'showRightExtraPanel' },
+    [5] = { 'showRightExtraPanel', 'showRightExtra2Panel' },
+    [3] = { 'showLeftPanel' },
+    [4] = { 'showLeftPanel', 'showLeftExtraPanel' },
+    [6] = { 'showLeftPanel', 'showLeftExtraPanel', 'showLeftExtra2Panel' },
+}
+
+function applyContainerPanel()
+    local gi = modules.game_interface
+    if not gi or not gi.panelsList or not gi.panelsRadioGroup then return end
+    local index = custom('containerPanel')
+    local entry = gi.panelsList[index] or gi.panelsList[1]
+    -- a coluna escolhida abre sozinha, senao as mochilas iriam para outra
+    for _, option in ipairs(panelOptions[index] or {}) do
+        if not modules.client_options.getOption(option) then
+            modules.client_options.setOption(option, true)
+        end
+    end
+    if entry and entry.checkbox then
+        gi.panelsRadioGroup:selectWidget(entry.checkbox)
+    end
+end
+
+-- Painel horizontal do minimapa: o minimapa sai da coluna e vira uma faixa
+-- larga por cima das duas colunas daquele lado (como no Miracle).
+local MINIMAP_PANEL_HEIGHT = 232
+
+local function reloadMainPanel()
+    if modules.game_mainpanel and modules.game_mainpanel.reloadMainPanelSizes then
+        modules.game_mainpanel.reloadMainPanelSizes()
+    end
+end
+
+local function minimapPanelHeight()
+    local h = tonumber(g_settings.getNumber('classic74_minimapPanelHeight')) or 0
+    if h < 140 then h = MINIMAP_PANEL_HEIGHT end
+    return math.min(h, 700)
+end
+
+-- o mapa dentro da faixa acompanha a altura dela (moldura de 2 px em volta)
+local function fitMinimapInPanel(panel)
+    local mm = modules.game_minimap
+    local ui = mm and mm.mapController and mm.mapController.ui
+    if not ui or ui:isDestroyed() or ui:getParent() ~= panel then return end
+    local border = ui:getChildById('minimapBorder')
+    if border then border:setHeight(panel:getHeight() - 11) end
+end
+
+local function alive(widget)
+    return widget ~= nil and not widget:isDestroyed()
+end
+
+local function minimapUI()
+    local mm = modules.game_minimap
+    local ui = mm and mm.mapController and mm.mapController.ui
+    return alive(ui) and ui or nil
+end
+
+-- colunas daquele lado, de fora para dentro (ate 3)
+local function sideWidgets(side)
+    local gi = modules.game_interface
+    local root = gi and gi.getRootPanel and gi.getRootPanel()
+    if not alive(root) then return nil end
+    if side == 'right' then
+        return root, { root:getChildById('gameMainRightPanel'), root:getChildById('gameRightExtraPanel'),
+            root:getChildById('gameRightExtra2Panel') }
+    end
+    return root, { root:getChildById('gameLeftPanel'), root:getChildById('gameLeftExtraPanel'),
+        root:getChildById('gameLeftExtra2Panel') }
+end
+
+local function restoreMinimap()
+    local ui = minimapUI()
+    if not ui or not minimapHome then return end
+    local home = minimapHome
+    minimapHome = nil
+    -- a coluna antiga pode ter sido fechada: entao vai para o painel principal
+    local parent = alive(home.parent) and home.parent:isVisible() and home.parent or modules.game_interface.getMainRightPanel()
+    if not alive(parent) or parent:hasChild(ui) then return end
+    ui:breakAnchors()
+    if ui.setParent then ui:setParent(nil, true) end
+    parent:insertChild(math.min(home.index or 1, parent:getChildCount() + 1), ui)
+    ui:setHeight(home.height or 152)
+    ui:setDraggable(home.draggable ~= false)
+    ui:setMargin(0)
+    local border = ui:getChildById('minimapBorder')
+    if border and home.borderHeight then border:setHeight(home.borderHeight) end
+    reloadMainPanel()
+end
+
+-- largura = as colunas abertas daquele lado (a primeira sempre conta)
+local function minimapPanelWidth(side)
+    local _, columns = sideWidgets(side)
+    if not columns or not alive(columns[1]) then return 176 end
+    local width = columns[1]:getWidth()
+    for i = 2, #columns do
+        local column = columns[i]
+        if alive(column) and column:isVisible() and column:getWidth() > 0 then
+            width = width + column:getWidth() + 1
+        end
+    end
+    return math.max(width, 176)
+end
+
+-- alguma coluna daquele lado aberta? (sem nenhuma, a faixa do minimapa some
+-- junto e volta quando uma coluna abrir de novo)
+local function sideHasColumn(side)
+    local _, columns = sideWidgets(side)
+    for _, column in ipairs(columns or {}) do
+        if alive(column) and column:isVisible() and column:getWidth() > 0 then return true end
+    end
+    return false
+end
+
+local function updatePanelWidths()
+    for side, panel in pairs(minimapPanels) do
+        if alive(panel) then
+            panel:setWidth(minimapPanelWidth(side))
+            panel:setVisible(sideHasColumn(side))
+        end
+    end
+end
+
+local function watchColumns(side)
+    if widthWatchers[side] then return end
+    local _, columns = sideWidgets(side)
+    local watched = {}
+    for _, w in ipairs(columns or {}) do
+        if alive(w) then
+            connect(w, { onVisibilityChange = updatePanelWidths, onGeometryChange = updatePanelWidths })
+            table.insert(watched, w)
+        end
+    end
+    widthWatchers[side] = watched
+end
+
+local function unwatchColumns(side)
+    for _, w in ipairs(widthWatchers[side] or {}) do
+        if alive(w) then
+            disconnect(w, { onVisibilityChange = updatePanelWidths, onGeometryChange = updatePanelWidths })
+        end
+    end
+    widthWatchers[side] = nil
+end
+
+local function destroyMinimapPanel(side)
+    local panel = minimapPanels[side]
+    if not panel then return end
+    minimapPanels[side] = nil
+    unwatchColumns(side)
+    local _, columns = sideWidgets(side)
+    for _, w in ipairs(columns or {}) do
+        if alive(w) then
+            w:removeAnchor(AnchorTop)
+            w:addAnchor(AnchorTop, 'parent', AnchorTop)
+        end
+    end
+    local ui = minimapUI()
+    if ui and alive(panel) and ui:getParent() == panel then restoreMinimap() end
+    if alive(panel) then panel:destroy() end
+end
+
+local function createMinimapPanel(side)
+    local panel = minimapPanels[side]
+    if not alive(panel) then
+        local root, columns = sideWidgets(side)
+        if not root or not columns or not alive(columns[1]) then return nil end
+        panel = g_ui.createWidget('Classic74MinimapPanel', root)
+        panel:setId('classic74' .. side .. 'MinimapPanel')
+        panel:addAnchor(AnchorTop, 'parent', AnchorTop)
+        if side == 'right' then
+            panel:addAnchor(AnchorRight, 'parent', AnchorRight)
+        else
+            panel:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+        end
+        panel:setHeight(minimapPanelHeight())
+        connect(panel, { onGeometryChange = function(widget, oldRect, newRect)
+            if oldRect.height ~= newRect.height then
+                fitMinimapInPanel(widget)
+                g_settings.set('classic74_minimapPanelHeight', newRect.height)
+            end
+        end })
+        for _, w in ipairs(columns) do
+            if alive(w) then
+                w:removeAnchor(AnchorTop)
+                w:addAnchor(AnchorTop, panel:getId(), AnchorBottom)
+            end
+        end
+        minimapPanels[side] = panel
+        watchColumns(side)
+    end
+    panel:setWidth(minimapPanelWidth(side))
+    return panel
+end
+
+-- openColumns: so quando a opcao acabou de ser ligada (no login vale o que o
+-- jogador deixou aberto)
+function applyMinimapPanels(openColumns)
+    if not g_game.isOnline() then return end
+    local ui = minimapUI()
+    if not ui then return end
+    -- só um lado por vez fica com o minimapa; a direita tem preferência
+    local wanted = custom('rightMinimapPanel') and 'right' or (custom('leftMinimapPanel') and 'left' or nil)
+    -- o painel horizontal ocupa pelo menos duas colunas: abre a segunda sozinho
+    local needed = wanted == 'left' and { 'showLeftPanel', 'showLeftExtraPanel' }
+        or (wanted == 'right' and { 'showRightExtraPanel' } or {})
+    for _, option in ipairs(openColumns and needed or {}) do
+        if not modules.client_options.getOption(option) then
+            modules.client_options.setOption(option, true)
+        end
+    end
+    for _, side in ipairs({ 'left', 'right' }) do
+        if side ~= wanted then destroyMinimapPanel(side) end
+    end
+    if not wanted then
+        restoreMinimap()
+        return
+    end
+    local panel = createMinimapPanel(wanted)
+    if not panel then return end
+    if ui:getParent() ~= panel then
+        if not minimapHome then
+            local border = ui:getChildById('minimapBorder')
+            local parent = ui:getParent()
+            minimapHome = {
+                parent = parent,
+                index = alive(parent) and parent:getChildIndex(ui) or 1,
+                height = ui:getHeight(),
+                borderHeight = border and border:getHeight(),
+                draggable = ui:isDraggable(),
+            }
+        end
+        ui:setParent(panel, true) -- true: não grava a nova coluna nas configurações
+    end
+    ui:breakAnchors()
+    ui:fill('parent')
+    -- encosta na moldura da faixa (2 px em cima e embaixo, o fundo do minimapa
+    -- ja tem 3 px de recuo dos lados)
+    ui:setMargin(0)
+    ui:setMarginTop(2)
+    ui:setMarginBottom(2)
+    ui:setDraggable(false)
+    local resize = panel:getChildById('resizeBorder')
+    if resize then resize:raise() end
+    fitMinimapInPanel(panel)
+    ui:show()
+    panel:setVisible(sideHasColumn(wanted))
+    -- o lugar antigo do minimapa no painel principal fica livre
+    reloadMainPanel()
+end
+
+-- Ciclo de vida ------------------------------------------------------------------
+local function onFeaturesGameStart()
+    hookConsole()
+    applyCreatureDrawing()
+    if not corpseEvent then corpseEvent = cycleEvent(expireCorpses, 5000) end
+    -- o minimapa e os painéis se arrumam no começo do jogo; aplica depois deles
+    scheduleEvent(function()
+        applySmoothWalking()
+        applyContainerPanel()
+        applyMinimapPanels()
+    end, 300)
+end
+
+local function onFeaturesGameEnd()
+    lastCorpseContainerId = nil
+    knownCorpses = {}
+    clearAllCorpseShaders()
+    if corpseEvent then removeEvent(corpseEvent); corpseEvent = nil end
+    destroyMinimapPanel('left')
+    destroyMinimapPanel('right')
+end
+
+function initFeatures()
+    hookConsole()
+    hookStaticTexts()
+    hookContainerOpen()
+    registerCorpseShader()
+    applyCreatureDrawing()
+    connect(Creature, { onDeath = onCreatureDeath })
+    connect(Container, { onClose = onContainerClose })
+    connect(g_game, { onGameStart = onFeaturesGameStart, onGameEnd = onFeaturesGameEnd })
+    if g_game.isOnline() then onFeaturesGameStart() end
+end
+
+function terminateFeatures()
+    disconnect(Creature, { onDeath = onCreatureDeath })
+    disconnect(Container, { onClose = onContainerClose })
+    disconnect(g_game, { onGameStart = onFeaturesGameStart, onGameEnd = onFeaturesGameEnd })
+    onFeaturesGameEnd()
+    restoreMinimap()
+    unhookConsole()
+    unhookStaticTexts()
+    unhookContainerOpen()
+    Creature.setDrawPlayerBars(true)
+    Creature.setDrawCreatureIcons(true)
+    if originalWalkMaxSteps ~= nil then
+        g_game.setWalkMaxSteps(originalWalkMaxSteps)
+        originalWalkMaxSteps = nil
+    end
+end
+
+function getNewCorpseCount()
+    return #newCorpses
+end

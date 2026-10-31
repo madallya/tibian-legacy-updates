@@ -1,0 +1,11 @@
+Module
+  name: client_classic74
+  description: Ajustes para deixar o OTClient com cara do cliente Tibia 7.4
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  autoload: true
+  autoload-priority: 150
+  scripts: [ classic74 ]
+  @onLoad: init()
+  @onUnload: terminate()

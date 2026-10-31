@@ -1,0 +1,95 @@
+// Hunt Analyzer no estilo do cliente do Miracle: janela pequena na coluna com o
+// tempo da sessão e três botões que abrem/fecham as janelas de estatísticas
+// (hunt74exp/hunt74loot/hunt74kills). Botão direito: menu da sessão.
+
+Hunt74Button < Button
+  height: 20
+  anchors.left: parent.left
+  anchors.right: parent.right
+  margin-top: 4
+  font: verdana-11px-antialised
+
+Hunt74Row < UIWidget
+  height: 14
+  anchors.left: parent.left
+  anchors.right: parent.right
+
+  Label
+    id: label
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-auto-resize: true
+
+  Label
+    id: value
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+
+MiniWindow
+  id: hunt74Window
+  height: 110
+  &save: true
+  @onOpen: modules.game_hunt74.onMiniWindowOpen()
+  @onClose: modules.game_hunt74.onMiniWindowClose()
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/options/analyzers
+    image-clip: 0 0 20 20
+    size: 12 12
+    image-smooth: true
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('Hunt Analyzer')
+    color: #9d9d9dff
+
+  MiniWindowContents
+    padding-left: 6
+    padding-right: 6
+    padding-top: 2
+    // espaco para o enfeite do canto de baixo (MiniWindowCorner74), como no Miracle
+    padding-bottom: 14
+
+    Hunt74Row
+      id: sessionRow
+      anchors.top: parent.top
+      margin-top: 2
+
+    Hunt74Button
+      id: expButton
+      anchors.top: sessionRow.bottom
+      margin-top: 6
+      !text: tr('Exp Statistics')
+      @onClick: modules.game_hunt74.toggleStats('exp')
+
+    Hunt74Button
+      id: lootButton
+      anchors.top: prev.bottom
+      !text: tr('Loot Statistics')
+      @onClick: modules.game_hunt74.toggleStats('loot')
+
+    Hunt74Button
+      id: killsButton
+      anchors.top: prev.bottom
+      !text: tr('Kills Statistics')
+      @onClick: modules.game_hunt74.toggleStats('kills')
+
+  MiniWindowCorner74

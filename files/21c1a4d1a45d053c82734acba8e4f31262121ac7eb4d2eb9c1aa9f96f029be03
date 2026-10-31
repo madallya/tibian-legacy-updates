@@ -1,0 +1,1203 @@
+-- Cyclopedia (Bestiary e Charm) e Bestiary Tracker (OTServ 7.4 / Telmora), no
+-- estilo do cliente do Miracle (módulo game_cyclopedia do OTClient). Os dados
+-- vêm do servidor pelo comando 0xE5 (ver src/game/bestiary.hh do servidor).
+
+local OPCODE = 0xE5
+local PAGE_SIZE = 15
+local CHARM_RUNE = { [0] = 0, 1, 2, 4, 5, 6, 8, 7, 9, 10, 11, 12, 15, 17, 18 }
+local OCCURRENCE = { 'Common', 'Uncommon', 'Rare', 'Very Rare' }
+local RARITY = { [0] = 'Common', 'Uncommon', 'Semi-Rare', 'Rare', 'Very Rare' }
+-- barras de resistência, na ordem da tela; bit = imunidade mandada pelo servidor
+local RESISTS = {
+    { 'physical', 'Physical', 8 }, { 'earth', 'Earth', 2 }, { 'fire', 'Fire', 1 }, { 'death', 'Death', 16 },
+    { 'energy', 'Energy', 4 }, { 'holy', 'Holy', 0 }, { 'ice', 'Ice', 0 }, { 'healing', 'Healing', 0 },
+}
+local GOLD = { [3031] = 1, [3035] = 100, [3043] = 10000 } -- ids do servidor (gold, platinum, crystal)
+local GOLD74 = { [2148] = 1, [2152] = 100, [2160] = 10000 } -- ids do cliente 7.4
+
+local window
+local tracker
+local races = {}        -- lista do servidor
+local byRace = {}
+local freePoints, earnedPoints = 0, 0
+local page = 1
+local filter = ''
+local currentTab = 'bestiary'
+local detailRace
+local detail            -- ficha aberta (resposta 8)
+local charms = {}
+local completed = {}
+local selectedCharm
+local tracked = {}          -- entradas 'race' (normal) ou 'race:estágio' (elite)
+-- Elite creatures (game_elite74 / elite.hh do servidor): fichas por estágio
+local elites = {}           -- [race] = { kills = {k1,k2,k3}, goals = {g1,g2,g3} }
+local eliteFree, eliteEarned = 0, 0
+local detailStage = 0       -- estágio aberto na ficha (0 = normal, 1..3 = elite)
+local normalDetail          -- última resposta 8 da raça aberta (base da ficha elite)
+local eliteDetail           -- última resposta 9
+local STAGE_NAMES = { [0] = 'Normal', '1 Star', '2 Stars', '3 Stars' }
+
+local function eliteModule()
+    return modules.game_elite74
+end
+
+local function eliteOf(race)
+    local e = elites[race]
+    if not e then
+        e = { kills = { 0, 0, 0 }, goals = { 1, 1, 1 } }
+        elites[race] = e
+    end
+    return e
+end
+
+-- chave do tracker: raça (normal) ou 'raça:estágio' (elite)
+local function trackKey(race, stage)
+    if (stage or 0) > 0 then return race .. ':' .. stage end
+    return tostring(race)
+end
+
+local function splitTrackKey(key)
+    local race, stage = tostring(key):match('^(%d+):(%d)$')
+    if race then return tonumber(race), tonumber(stage) end
+    return tonumber(key), 0
+end
+
+-- Envio -----------------------------------------------------------------------------
+local function send(sub, fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then return end
+    if modules.game_livecam74 and modules.game_livecam74.isSpectating and modules.game_livecam74.isSpectating() then
+        return
+    end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(sub)
+    if fill then fill(msg) end
+    protocol:send(msg)
+end
+
+local function outfitOf(r)
+    if r.lookType and r.lookType > 0 then
+        return { type = r.lookType, head = r.head, body = r.body, legs = r.legs, feet = r.feet }
+    end
+    return { type = 0, auxType = r.item or 0 }
+end
+
+local function displayName(r)
+    if r and r.name and r.name ~= '' then return r.name end
+    return tr('Unknown')
+end
+
+local function setShader(creatureWidget, name)
+    local creature = creatureWidget:getCreature()
+    if creature and creature.setShader then
+        pcall(function() creature:setShader(name) end)
+    end
+end
+
+-- Barra de mortes em 3 partes (como no Miracle: laranja em andamento, verde
+-- quando completa; cada parte enche o espaço todo dentro da moldura) --------------
+local function setProgressBars(fit, bar1, bar2, bar3, kills, goal1, goal2, goal3)
+    local function width(value, max)
+        return math.min(math.floor((value / math.max(1, max)) * fit + 0.5), fit)
+    end
+    local image = kills >= goal3 and '/game_cyclopedia74/images/bestiary/kills-green'
+        or '/game_cyclopedia74/images/bestiary/kills-orange'
+    local function setBar(bar, w)
+        bar:setVisible(w > 0)
+        if w > 0 then
+            bar:setWidth(w)
+            bar:setImageSource(image)
+            bar:setImageRect({})
+        end
+    end
+    setBar(bar1, kills > 0 and width(math.min(kills, goal1), goal1) or 0)
+    setBar(bar2, kills > goal1 and width(math.min(kills - goal1, goal2 - goal1), goal2 - goal1) or 0)
+    setBar(bar3, kills > goal2 and width(math.min(kills - goal2, goal3 - goal2), goal3 - goal2) or 0)
+end
+
+local function barTooltips(b1, b2, b3, kills, t)
+    local full = kills >= t[3] and ' (fully unlocked)' or ''
+    b1:setTooltip(string.format(' %d / %d%s', kills, t[1], full))
+    b2:setTooltip(string.format(' %d / %d%s', kills, t[2], full))
+    b3:setTooltip(string.format(' %d / %d%s', kills, t[3], full))
+end
+
+-- Bestiary Tracker: criaturas acompanhadas (por personagem) -----------------------------
+local function trackerKey()
+    return 'classic74_bestiaryTracker_' .. (g_game.getCharacterName() or '')
+end
+
+local function loadTracked()
+    tracked = {}
+    for id in (g_settings.getString(trackerKey()) or ''):gmatch('[%d:]+') do
+        if id:match('^%d+$') or id:match('^%d+:[123]$') then
+            table.insert(tracked, id:match('^%d+$') and tostring(tonumber(id)) or id)
+        end
+    end
+end
+
+local function saveTracked()
+    g_settings.set(trackerKey(), table.concat(tracked, ','))
+end
+
+local function isTracked(race, stage)
+    local key = trackKey(race, stage)
+    for _, id in ipairs(tracked) do if id == key then return true end end
+    return false
+end
+
+-- ordem do tracker (menu da janela): name | percent | remaining | elite; asc/desc
+local function trackerOrder()
+    local by = g_settings.getString('classic74_bestiaryTrackerSort')
+    if by ~= 'percent' and by ~= 'remaining' and by ~= 'elite' then by = 'name' end
+    local desc = g_settings.getBoolean('classic74_bestiaryTrackerDesc')
+    return by, desc
+end
+
+-- entrada do tracker: a raça (normal) ou uma cópia com os dados do estágio elite
+local function trackerEntry(key)
+    local race, stage = splitTrackKey(key)
+    local r = byRace[race]
+    if not r then return nil end
+    if stage == 0 then return r end
+    local e = eliteOf(race)
+    return { race = race, name = r.name, lookType = r.lookType, head = r.head, body = r.body,
+        legs = r.legs, feet = r.feet, item = r.item, elite = stage,
+        kills = e.kills[stage] or 0, thresholds = { e.goals[stage] or 1 } }
+end
+
+local function trackerPercent(r)
+    local t = r.thresholds or { 1, 1, 1 }
+    local total = t[#t] or 1
+    return math.min(1, (r.kills or 0) / math.max(1, total))
+end
+
+local function trackerRemaining(r)
+    local t = r.thresholds or { 1, 1, 1 }
+    if (r.elite or 0) > 0 then return math.max(0, (t[1] or 0) - (r.kills or 0)) end
+    if (r.stage or 0) >= 3 then return 0 end
+    return math.max(0, (t[(r.stage or 0) + 1] or 0) - (r.kills or 0))
+end
+
+local function sortedTracked()
+    local list = {}
+    for _, key in ipairs(tracked) do
+        local r = trackerEntry(key)
+        if r then table.insert(list, r) end
+    end
+    local by, desc = trackerOrder()
+    table.sort(list, function(a, b)
+        local x, y
+        if by == 'percent' then x, y = trackerPercent(a), trackerPercent(b)
+        elseif by == 'remaining' then x, y = trackerRemaining(a), trackerRemaining(b)
+        elseif by == 'elite' then x, y = (a.elite or 0), (b.elite or 0)
+        end
+        if x ~= nil and x ~= y then
+            if desc then return x > y else return x < y end
+        end
+        local an, bn = displayName(a):lower(), displayName(b):lower()
+        if an == bn then
+            if a.race ~= b.race then return a.race < b.race end
+            return (a.elite or 0) < (b.elite or 0)
+        end
+        if by == 'name' and desc then return an > bn end
+        return an < bn
+    end)
+    return list
+end
+
+-- barra em 3 partes: cada parte e um estagio (0..t1, t1..t2, t2..t3); o total
+-- de mortes fica escrito na parte do meio, como no Miracle
+local function setTrackerBar(row, r)
+    local kills = r.kills or 0
+    local t = r.thresholds or { 1, 1, 1 }
+    if (r.elite or 0) > 0 then
+        -- ficha elite: uma meta só, dividida em 3 partes como a normal (1 : 2 : 5)
+        local goal = math.max(1, t[1] or 1)
+        t = { math.max(1, math.floor(goal / 5 + 0.5)), math.max(1, math.floor(goal * 2 / 5 + 0.5)), goal }
+    end
+    -- completa: as 3 partes ficam com a barra verde do Miracle e continuam contando
+    local complete = kills >= (t[3] or 1)
+    local lo = 0
+    for i = 1, 3 do
+        local hi = t[i] or lo
+        local span = math.max(1, hi - lo)
+        local seg = row:getChildById('seg' .. i)
+        seg.single = nil
+        seg:setVisible(true)
+        seg.percent = math.max(0, math.min(100, math.floor((kills - lo) * 100 / span)))
+        seg:getChildById('text'):setText(i == 2 and tostring(kills) or '')
+        seg:getChildById('fill'):setImageSource(complete and '/images/ui/bar_fill74_green' or '/images/ui/bar_fill74')
+        lo = hi
+    end
+end
+
+local function layoutTrackerRow(row)
+    local w = row:getWidth()
+    if w <= 0 then return end
+    local seg1 = row:getChildById('seg1')
+    local segw = math.floor((w - 2) / 3)
+    seg1:setWidth(segw)
+    row:getChildById('seg2'):setWidth(segw)
+    for i = 1, 3 do
+        local seg = row:getChildById('seg' .. i)
+        local inner = seg:getWidth() - 2
+        local fw = math.floor(inner * (seg.percent or 0) / 100 + 0.5)
+        local fill = seg:getChildById('fill')
+        fill:setWidth(math.max(0, fw))
+        fill:setVisible(fw > 0)
+    end
+end
+
+-- bonecos andando: redesenha a interface no ritmo das pernas (150 ms) enquanto o
+-- tracker esta aberto com criaturas (cliente sem repaintInterface: parado)
+local animEvent
+local function updateTrackerAnimation()
+    local rows = tracker and tracker:getChildById('contentsPanel')
+    local active = repaintInterface and tracker and tracker:isVisible() and not tracker:isOn()
+        and rows and rows:getChildCount() > 0 and rows:getChildren()[1]:getStyleName() == 'BestiaryTracker74Row'
+    if active and not animEvent then
+        animEvent = cycleEvent(function()
+            if tracker and tracker:isVisible() and not tracker:isOn() then repaintInterface() end
+        end, 150)
+    elseif not active and animEvent then
+        removeEvent(animEvent)
+        animEvent = nil
+    end
+end
+
+local function fillTracker()
+    if not tracker then return end
+    addEvent(updateTrackerAnimation)
+    local contents = tracker:getChildById('contentsPanel')
+    contents:destroyChildren()
+    local any = false
+    for _, r in ipairs(sortedTracked()) do
+        local id, stage = r.race, r.elite or 0
+        local row = g_ui.createWidget('BestiaryTracker74Row', contents)
+        local creatureWidget = row:getChildById('creature')
+        creatureWidget:setOutfit(outfitOf(r))
+        row:getChildById('name'):setText(displayName(r))
+        local stars = row:getChildById('stars')
+        if stage > 0 and eliteModule() then
+            eliteModule().applyEliteLook(creatureWidget:getCreature(), stage)
+            stars:setImageSource(eliteModule().eliteCardStarsImage(stage))
+            stars:setSize(eliteModule().eliteStarsSize(stage))
+            stars:setVisible(true)
+        else
+            stars:setVisible(false)
+        end
+        setTrackerBar(row, r)
+        row.onGeometryChange = function() layoutTrackerRow(row) end
+        layoutTrackerRow(row)
+        row.onMouseRelease = function(widget, pos, button)
+            if button == MouseRightButton then
+                local menu = g_ui.createWidget('PopupMenu')
+                menu:addOption(tr('Stop tracking'), function() setTracked(id, false, stage) end)
+                menu:addOption(tr('Open in Cyclopedia'), function() showRace(id, stage) end)
+                menu:display(pos)
+                return true
+            elseif button == MouseLeftButton then
+                showRace(id, stage)
+                return true
+            end
+        end
+        any = true
+    end
+    if not any then
+        local label = g_ui.createWidget('BestiaryTracker74Empty', contents)
+        label:setText(#tracked > 0 and tr('Loading...') or
+            tr('Open a creature in the Cyclopedia and check "Track kills".'))
+    end
+end
+
+local function trackerMenu(button)
+    local by, desc = trackerOrder()
+    local menu = g_ui.createWidget('PopupMenu')
+    local function setBy(v) g_settings.set('classic74_bestiaryTrackerSort', v); fillTracker() end
+    menu:addCheckBox(tr('Sort by name'), by == 'name', function() setBy('name') end)
+    menu:addCheckBox(tr('Sort by completion percentage'), by == 'percent', function() setBy('percent') end)
+    menu:addCheckBox(tr('Sort by remaining kills'), by == 'remaining', function() setBy('remaining') end)
+    menu:addCheckBox(tr('Sort by elite'), by == 'elite', function() setBy('elite') end)
+    menu:addSeparator()
+    menu:addCheckBox(tr('Sort ascending'), not desc, function() g_settings.set('classic74_bestiaryTrackerDesc', false); fillTracker() end)
+    menu:addCheckBox(tr('Sort descending'), desc, function() g_settings.set('classic74_bestiaryTrackerDesc', true); fillTracker() end)
+    menu:addSeparator()
+    menu:addOption(tr('Clear bestiary tracker'), function()
+        tracked = {}
+        saveTracked()
+        fillTracker()
+        if window and window:isVisible() then
+            local box = window:recursiveGetChildById('trackCheck')
+            if box then box:setChecked(false) end
+        end
+    end)
+    local r = button:getRect()
+    menu:display({ x = r.x, y = r.y + r.height })
+end
+
+function setTracked(race, on, stage)
+    local key = trackKey(race, stage)
+    if on and not isTracked(race, stage) then
+        table.insert(tracked, key)
+    elseif not on then
+        for i, id in ipairs(tracked) do
+            if id == key then table.remove(tracked, i); break end
+        end
+    end
+    saveTracked()
+    fillTracker()
+end
+
+-- Rodapé: ouro, pontos ----------------------------------------------------------------
+local function goldInInventory()
+    local player = g_game.getLocalPlayer()
+    if not player then return 0 end
+    local total = 0
+    local function count(item)
+        if not item then return end
+        local value = GOLD74[item:getId()] or 0
+        if value > 0 then total = total + value * math.max(1, item:getCount()) end
+    end
+    for slot = InventorySlotFirst, InventorySlotLast do
+        count(player:getInventoryItem(slot))
+    end
+    for _, container in pairs(g_game.getContainers()) do
+        for _, item in ipairs(container:getItems()) do count(item) end
+    end
+    return total
+end
+
+local function updatePoints()
+    if not window then return end
+    window:getChildById('charmsBase'):getChildById('value'):setText(tostring(freePoints))
+    window:getChildById('goldBase'):getChildById('value'):setText(tostring(goldInInventory()))
+    local eliteBase = window:getChildById('eliteBase')
+    if eliteBase then
+        eliteBase:getChildById('value'):setText(tostring(eliteFree))
+        eliteBase:setTooltip(tr('Available elite points') .. string.format(' (%d / %d)', eliteFree, eliteEarned))
+    end
+end
+
+-- Bestiary: grade --------------------------------------------------------------------------
+local function sortedRaces()
+    local list = {}
+    local f = filter:lower()
+    for _, r in ipairs(races) do
+        if f == '' or (r.name ~= '' and r.name:lower():find(f, 1, true)) then
+            table.insert(list, r)
+        end
+    end
+    table.sort(list, function(a, b)
+        local ka, kb = a.kills > 0, b.kills > 0
+        if ka ~= kb then return ka end
+        if not ka then return a.race < b.race end
+        return a.name < b.name
+    end)
+    return list
+end
+
+local function fillGrid()
+    if not window then return end
+    local panel = window:getChildById('bestiaryPanel')
+    local grid = panel:recursiveGetChildById('grid')
+    grid:destroyChildren()
+    local list = sortedRaces()
+    local pages = math.max(1, math.ceil(#list / PAGE_SIZE))
+    page = math.max(1, math.min(page, pages))
+    for i = (page - 1) * PAGE_SIZE + 1, math.min(#list, page * PAGE_SIZE) do
+        local r = list[i]
+        local card = g_ui.createWidget('Cyclopedia74Creature', grid)
+        card:setId('race' .. r.race)
+        local sprite = card:getChildById('Sprite')
+        sprite:setOutfit(outfitOf(r))
+        local creature = sprite:getCreature()
+        if creature and creature.setStaticWalking then creature:setStaticWalking(1000) end
+        local known = r.kills > 0
+        card:getChildById('Name'):setText(displayName(r))
+        local kills = card:getChildById('KillsLabel')
+        local done = card:getChildById('Finalized')
+        if not known then
+            kills:setText('?')
+            setShader(sprite, 'Outfit - cyclopedia-black')
+        else
+            setShader(sprite, '')
+            if r.stage >= 3 then
+                kills:setVisible(false)
+                done:setVisible(true)
+            else
+                kills:setText(string.format('%d / 3', r.stage))
+            end
+        end
+        card:getChildById('ClassBase').onClick = function()
+            if known then showRace(r.race) end
+        end
+    end
+    panel:recursiveGetChildById('pageLabel'):setText(string.format('%d / %d', page, pages))
+    panel:recursiveGetChildById('loadingLabel'):setText(#races == 0 and tr('Loading...') or (#list == 0 and tr('No creature found.') or ''))
+    panel:recursiveGetChildById('prevButton'):setEnabled(page > 1)
+    panel:recursiveGetChildById('firstButton'):setEnabled(page > 1)
+    panel:recursiveGetChildById('nextButton'):setEnabled(page < pages)
+end
+
+function changePage(delta)
+    -- na ficha, o botão de voltar (o primeiro) volta para a lista de criaturas
+    if detailRace then
+        if delta == 'first' then backToGrid() end
+        return
+    end
+    if delta == 'first' then page = 1 else page = page + delta end
+    fillGrid()
+end
+
+function doSearch()
+    if not window then return end
+    filter = window:recursiveGetChildById('searchEdit'):getText() or ''
+    page = 1
+    if detailRace then backToGrid() else fillGrid() end
+end
+
+-- Bestiary: ficha da criatura --------------------------------------------------------------
+local function charmById(id)
+    for _, c in ipairs(charms) do if c.id == id then return c end end
+end
+
+local function fillCharmSelector(d)
+    local info = window:recursiveGetChildById('creatureInfo')
+    local combo = info:getChildById('charmSelector')
+    local select = info:getChildById('selectButton')
+    local icon = info:recursiveGetChildById('charmIcon')
+    combo:clearOptions()
+    icon:setImageSource('')
+    if d.stage < 3 then
+        combo:addOption('?')
+        combo:setEnabled(false)
+        select:setEnabled(false)
+        info:recursiveGetChildById('goldBalance'):setText('?')
+        return
+    end
+    info:recursiveGetChildById('goldBalance'):setText('0')
+    local current = d.charm ~= 255 and charmById(d.charm) or nil
+    if current then
+        icon:setImageSource('/images/game/analyzer/charm_runes/charm_' .. (CHARM_RUNE[current.id] or 0))
+    end
+    local options = 0
+    for _, c in ipairs(charms) do
+        if c.unlocked and (c.race == 0 or c.race == d.race) then
+            combo:addOption(c.name, c.id)
+            options = options + 1
+        end
+    end
+    if options == 0 then
+        combo:addOption(tr('None Unlocked'))
+        combo:setEnabled(false)
+        select:setEnabled(false)
+    else
+        combo:setEnabled(true)
+        select:setEnabled(true)
+        if current then combo:setCurrentOptionByData(current.id, true) end
+    end
+end
+
+function onCharmOptionChange() end
+
+function selectCharmForRace()
+    if not detail or detail.stage < 3 then return end
+    local combo = window:recursiveGetChildById('charmSelector')
+    local id = combo:getCurrentOption() and combo:getCurrentOption().data
+    if type(id) ~= 'number' then return end
+    if detail.charm == id then
+        send(6, function(msg) msg:addU8(id) end) -- mesmo charm: tira
+    else
+        send(5, function(msg) msg:addU8(id); msg:addU16(detail.race) end)
+    end
+    scheduleEvent(function() if detailRace then requestRace(detailRace) end end, 300)
+end
+
+local function fillLoot(d)
+    local info = window:recursiveGetChildById('creatureInfo')
+    local list = info:recursiveGetChildById('itemList')
+    list:destroyChildren()
+    if not d.loot then return end
+    -- quantos cabem por linha (34 px + 2 de espaço), como no Miracle (14 na janela padrão)
+    local perRow = math.max(1, math.floor((list:getWidth() - 108 + 4) / 36))
+    local groups = {}
+    for _, it in ipairs(d.loot) do
+        groups[it.rarity] = groups[it.rarity] or {}
+        table.insert(groups[it.rarity], it)
+    end
+    for rarity = 0, 4 do
+        local items = groups[rarity]
+        if items then
+            local group = g_ui.createWidget('Cyclopedia74ItemGroup', list)
+            group:setId('rarity' .. rarity)
+            local rowCount = math.max(1, math.ceil(#items / perRow))
+            group:setHeight(45 + (rowCount - 1) * 36)
+            local title = group:getChildById('Title')
+            title:breakAnchors()
+            title:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+            title:addAnchor(AnchorTop, 'parent', AnchorTop)
+            title:setMarginLeft(5)
+            title:setMarginTop(16)
+            title:setText(tr(RARITY[rarity]) .. ':')
+            local rows = {}
+            for ri = 1, rowCount do
+                local row = g_ui.createWidget('UIWidget', group:getChildById('Items'))
+                row:setId('row' .. ri)
+                row:setHeight(32)
+                row:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+                row:addAnchor(AnchorRight, 'parent', AnchorRight)
+                if ri == 1 then
+                    row:addAnchor(AnchorTop, 'parent', AnchorTop)
+                    row:setMarginTop(5)
+                else
+                    row:addAnchor(AnchorTop, 'row' .. (ri - 1), AnchorBottom)
+                    row:setMarginTop(2)
+                end
+                rows[ri] = row
+            end
+            for i = 1, rowCount * perRow do
+                local slot = g_ui.createWidget('Cyclopedia74Item', rows[math.ceil(i / perRow)])
+                slot:setId('slot' .. i)
+                local it = items[i]
+                if it then
+                    if it.revealed and it.id > 0 then
+                        slot:setItemId(it.id)
+                        local thing = g_things.getThingType(it.id, ThingCategoryItem)
+                        slot:getChildById('Stackable'):setText((thing and thing:isStackable()) and '1+' or '1')
+                        slot:setTooltip(it.name .. '\n' .. tr(RARITY[it.rarity]))
+                    else
+                        slot:getChildById('undefinedItem'):setVisible(true)
+                        slot:setTooltip(tr('Reach the next stage to reveal this item.'))
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- seletor "Stage: Normal / 1 Star / 2 Stars / 3 Stars" (como no Miracle)
+local function setStageCombo(stage)
+    local combo = window and window:recursiveGetChildById('stageCombo')
+    if not combo then return end
+    combo.ignoreChange = true
+    combo:setCurrentOptionByData(stage, true)
+    combo.ignoreChange = false
+end
+
+function onStageChange(combo)
+    if not detailRace or (combo and combo.ignoreChange) then return end
+    local option = combo and combo:getCurrentOption()
+    local stage = option and option.data or 0
+    if type(stage) ~= 'number' then stage = 0 end
+    showRace(detailRace, stage)
+end
+
+-- boneco da ficha: aura e estrelas conforme o estágio
+local function setSheetStage(info, stage)
+    local sprite = info:recursiveGetChildById('sprite')
+    local stars = info:recursiveGetChildById('eliteStars')
+    local em = eliteModule()
+    if em then em.applyEliteLook(sprite:getCreature(), stage) end
+    if stars then
+        if stage > 0 and em then
+            stars:setImageSource(em.eliteCardStarsImage(stage))
+            stars:setSize(em.eliteStarsSize(stage))
+            local off = em.eliteSheetOffset(stage)
+            stars:setMarginLeft(off.x)
+            stars:setMarginTop(off.y)
+            stars:setVisible(true)
+        else
+            stars:setVisible(false)
+        end
+    end
+    local bonusIcon = info:getChildById('bonusIcon')
+    if stage > 0 then
+        bonusIcon:setImageSource('/game_elite74/images/icon_elite')
+        bonusIcon:setTooltip(tr('Elite points for completing this entry'))
+    else
+        bonusIcon:setImageSource('/game_cyclopedia74/images/icons/monster-icon-bonuspoints')
+        bonusIcon:setTooltip(tr('Charm points for completing this entry'))
+    end
+end
+
+-- ficha elite (resposta 9): a base (dificuldade, ocorrência, ataques, locais,
+-- loot, imunidades) é a da ficha normal; vida/exp/velocidade/armadura vêm já
+-- com a escala do estágio; uma meta de mortes só; pontos = elite points
+local function onEliteRace(d)
+    if not window or detailRace ~= d.race or detailStage ~= d.stage then return end
+    eliteDetail = d
+    local e = eliteOf(d.race)
+    e.kills[d.stage], e.goals[d.stage] = d.kills, d.goal
+    local info = window:recursiveGetChildById('creatureInfo')
+    setSheetStage(info, d.stage)
+    local goal = math.max(1, d.goal)
+    local bars = { info:getChildById('progressBack1'), info:getChildById('progressBack2'), info:getChildById('progressBack3') }
+    local borders = { info:getChildById('progressBorder1'), info:getChildById('progressBorder2'), info:getChildById('progressBorder3') }
+    -- uma barra só: a 1ª enche até a meta; completa = verde
+    setProgressBars(58, bars[1], bars[2], bars[3], math.min(d.kills, goal), goal, goal, goal)
+    if d.kills >= goal then
+        -- setProgressBars só marca completo com kills >= goal3; como as 3 metas
+        -- são a mesma, kills == goal já pinta a 1ª de verde
+        bars[2]:setVisible(false)
+        bars[3]:setVisible(false)
+    end
+    info:getChildById('progressValue'):setText(tostring(d.kills))
+    local full = d.complete and ' (fully unlocked)' or ''
+    for i = 1, 3 do
+        borders[i]:setTooltip(string.format(' %d / %d%s', d.kills, goal, full))
+    end
+    info:getChildById('bonusValue'):setText(tostring(d.points))
+    info:getChildById('value1'):setText(tostring(d.hp))
+    info:getChildById('value2'):setText(tostring(d.exp))
+    info:getChildById('value3'):setText(tostring(d.speed))
+    info:getChildById('value4'):setText(tostring(d.armor))
+    local track = info:recursiveGetChildById('trackCheck')
+    track.ignoreChange = true
+    track:setChecked(isTracked(d.race, d.stage))
+    track.ignoreChange = false
+    local sprite = info:recursiveGetChildById('sprite')
+    local tip = sprite.baseTooltip or ''
+    local lootTip = tr('Elite creature') .. ' (' .. tr(STAGE_NAMES[d.stage]) .. ')'
+    if d.lootRolls > 0 then -- hoje 0: loot igual ao normal (como no Miracle)
+        lootTip = lootTip .. ': +' .. d.lootRolls .. ' ' .. tr('loot rolls')
+    end
+    sprite:setTooltip((tip ~= '' and (tip .. '\n') or '') .. lootTip)
+end
+
+local function onRace(d)
+    if not window or detailRace ~= d.race then return end
+    detail = d
+    normalDetail = d
+    local r = byRace[d.race]
+    if r then r.kills, r.stage = d.kills, d.stage; if d.name ~= '' then r.name = d.name end end
+    local info = window:recursiveGetChildById('creatureInfo')
+    info:setText(displayName(d))
+    local sprite = info:recursiveGetChildById('sprite')
+    sprite:setOutfit(outfitOf(r or {}))
+    local creature = sprite:getCreature()
+    if creature and creature.setStaticWalking then creature:setStaticWalking(1000) end
+    setSheetStage(info, detailStage)
+    local extra = {}
+    if d.summon > 0 then table.insert(extra, tr('Summon: %d mana', d.summon)) else table.insert(extra, tr('Cannot be summoned')) end
+    table.insert(extra, d.convince == 1 and tr('Can be convinced') or tr('Cannot be convinced'))
+    sprite.baseTooltip = table.concat(extra, '\n')
+    sprite:setTooltip(sprite.baseTooltip)
+
+    local t = d.thresholds
+    setProgressBars(58, info:getChildById('progressBack1'), info:getChildById('progressBack2'),
+        info:getChildById('progressBack3'), d.kills, t[1], t[2], t[3])
+    info:getChildById('progressValue'):setText(tostring(d.kills))
+    barTooltips(info:getChildById('progressBorder1'), info:getChildById('progressBorder2'),
+        info:getChildById('progressBorder3'), d.kills, t)
+
+    info:getChildById('starFill'):setWidth(d.difficulty * 10)
+    info:getChildById('starBase'):setTooltip(tr('Difficulty') .. ': ' .. d.difficulty .. ' / 5')
+    info:getChildById('diamondFill'):setWidth(math.max(0, math.min(4, d.occurrence)) * 9)
+    info:getChildById('diamondBase'):setTooltip(tr('Occurrence') .. ': ' .. tr(OCCURRENCE[d.occurrence] or '?'))
+    local attack = d.attack or 0
+    local summonIcon, convinceIcon = info:getChildById('summonIcon'), info:getChildById('convinceIcon')
+    summonIcon:setImageClip({ x = bit.band(attack, 1) ~= 0 and 18 or 0, y = 0, width = 9, height = 9 })
+    summonIcon:setSize({ width = 9, height = 9 })
+    summonIcon:setTooltip(bit.band(attack, 1) ~= 0 and tr('Attacks from a distance') or tr('Attacks in melee'))
+    convinceIcon:setImageClip({ x = 27, y = 0, width = 9, height = 9 })
+    convinceIcon:setSize({ width = 9, height = 9 })
+    convinceIcon:setVisible(bit.band(attack, 2) ~= 0)
+    convinceIcon:setTooltip(tr('Casts spells'))
+    info:getChildById('bonusValue'):setText(tostring(d.charmPoints))
+    info:getChildById('bonusIcon'):setTooltip(tr('Charm points for completing this entry'))
+
+    local track = info:recursiveGetChildById('trackCheck')
+    track.ignoreChange = true
+    track:setChecked(isTracked(d.race))
+    track.ignoreChange = false
+
+    for i = 1, 4 do info:getChildById('value' .. i):setText('?') end
+    if d.info then
+        info:getChildById('value1'):setText(tostring(d.info.hp))
+        info:getChildById('value2'):setText(tostring(d.info.exp))
+        info:getChildById('value3'):setText(tostring(d.info.speed))
+        info:getChildById('value4'):setText(tostring(d.info.armor))
+    end
+    for _, res in ipairs(RESISTS) do
+        local bar = info:getChildById(res[1] .. 'Progress')
+        local fill = bar:getChildById('Fill')
+        if d.info then
+            local immune = res[3] ~= 0 and bit.band(d.info.immune, res[3]) ~= 0
+            local percent = immune and 0 or 100
+            fill:setVisible(true)
+            fill:setBackgroundColor(immune and '#AE0F0F' or '#FFFFFF')
+            fill:setMarginRight(immune and 36 or 19)
+            bar:setTooltip(string.format('%s: %d%%', tr(res[2]), percent))
+        else
+            fill:setVisible(false)
+            bar:setTooltip(tr(res[2]) .. ': ?')
+        end
+    end
+    fillCharmSelector(d)
+    fillLoot(d)
+    -- ficha elite: a base acima vale, e por cima entram os dados do estágio
+    if detailStage > 0 then
+        local track = info:recursiveGetChildById('trackCheck')
+        track.ignoreChange = true
+        track:setChecked(isTracked(d.race, detailStage))
+        track.ignoreChange = false
+        send(9, function(msg) msg:addU16(d.race); msg:addU8(detailStage) end)
+    end
+end
+
+function showRace(race, stage)
+    if not window then return end
+    if not window:isVisible() then show() end
+    if currentTab ~= 'bestiary' then showTab('bestiary') end
+    stage = tonumber(stage) or 0
+    if stage < 0 or stage > 3 then stage = 0 end
+    local sameRace = detailRace == race
+    detailRace = race
+    detailStage = stage
+    eliteDetail = nil
+    local panel = window:getChildById('bestiaryPanel')
+    panel:recursiveGetChildById('grid'):hide()
+    panel:recursiveGetChildById('creatureInfo'):show()
+    panel:recursiveGetChildById('firstButton'):setEnabled(true)
+    -- na ficha não há o que paginar: 1 / 1 (volta ao normal em backToGrid)
+    panel:recursiveGetChildById('pageLabel'):setText('1 / 1')
+    panel:recursiveGetChildById('prevButton'):setEnabled(false)
+    panel:recursiveGetChildById('nextButton'):setEnabled(false)
+    setStageCombo(stage)
+    if sameRace and normalDetail and normalDetail.race == race then
+        -- só trocou o estágio: reaproveita a ficha normal já carregada
+        onRace(normalDetail)
+    else
+        detail = nil
+        normalDetail = nil
+        requestRace(race)
+    end
+end
+
+function backToGrid()
+    detailRace = nil
+    detail = nil
+    normalDetail = nil
+    eliteDetail = nil
+    detailStage = 0
+    if not window then return end
+    local panel = window:getChildById('bestiaryPanel')
+    panel:recursiveGetChildById('creatureInfo'):hide()
+    panel:recursiveGetChildById('grid'):show()
+    fillGrid()
+end
+
+function onTrackChange(checked)
+    local box = window and window:recursiveGetChildById('trackCheck')
+    if not detailRace or (box and box.ignoreChange) then return end
+    setTracked(detailRace, checked, detailStage)
+    if checked then openTracker() end
+end
+
+-- Charm ---------------------------------------------------------------------------------
+function fillCreatureList()
+    if not window then return end
+    local list = window:recursiveGetChildById('creatureList')
+    local search = (window:recursiveGetChildById('creatureSearch'):getText() or ''):lower()
+    list:destroyChildren()
+    for _, r in ipairs(completed) do
+        if search == '' or r.name:lower():find(search, 1, true) then
+            local row = g_ui.createWidget('Cyclopedia74CharmName', list)
+            local c = r.charm ~= 255 and charmById(r.charm)
+            row:setText(c and (r.name .. ' (' .. c.name .. ')') or r.name)
+            row:setColor(c and '#9d9d9d' or '#C0C0C0')
+            row.race = r.race
+            row.onClick = function(self)
+                for _, other in ipairs(list:getChildren()) do other:setChecked(other == self) end
+            end
+        end
+    end
+end
+
+local function fillCharmInfo()
+    local c = selectedCharm and charmById(selectedCharm)
+    local info = window:recursiveGetChildById('charmPanel'):getChildById('info')
+    local unlock = info:getChildById('unlockButton')
+    if not c then
+        info:getChildById('charmName'):setText('')
+        info:getChildById('charmDescription'):setText(tr('Select a charm to see its details.'))
+        unlock:setEnabled(false)
+        unlock:setText(tr('Unlock'))
+        info:getChildById('assignButton'):setEnabled(false)
+        info:getChildById('removeButton'):setEnabled(false)
+        return
+    end
+    info:getChildById('charmName'):setText(c.name)
+    local text = c.description
+    if c.unlocked then
+        text = text .. '\n\n' .. (c.race ~= 0 and tr('Active on: %s', c.raceName) or tr('Not assigned to a creature.'))
+    else
+        text = text .. '\n\n' .. tr('Cost: %d charm points', c.cost)
+    end
+    info:getChildById('charmDescription'):setText(text)
+    unlock:setText(c.unlocked and tr('Unlocked') or tr('Unlock'))
+    unlock:setEnabled(not c.unlocked and freePoints >= c.cost)
+    info:getChildById('assignButton'):setEnabled(c.unlocked)
+    info:getChildById('removeButton'):setEnabled(c.unlocked and c.race ~= 0)
+end
+
+local function fillCharms()
+    if not window then return end
+    local grid = window:recursiveGetChildById('charmGrid')
+    grid:destroyChildren()
+    local sorted = {}
+    for _, c in ipairs(charms) do table.insert(sorted, c) end
+    table.sort(sorted, function(a, b) return a.name < b.name end)
+    for _, c in ipairs(sorted) do
+        local card = g_ui.createWidget('Cyclopedia74CharmCard', grid)
+        card:getChildById('name'):setText(c.name)
+        card:getChildById('icon'):setImageSource('/images/game/analyzer/charm_runes/charm_' .. (CHARM_RUNE[c.id] or 0))
+        card:getChildById('creature'):setText(c.race ~= 0 and c.raceName or '')
+        local cost = card:getChildById('cost')
+        cost:setText(tostring(c.cost))
+        if c.unlocked then
+            cost:setColor('#6fd16f')
+            cost:setTooltip(tr('Unlocked'))
+        else
+            cost:setColor(freePoints >= c.cost and '#dfdfdf' or '#ff5c5c')
+            cost:setTooltip(tr('Cost: %d charm points', c.cost))
+        end
+        card:setChecked(selectedCharm == c.id)
+        card.onClick = function()
+            selectedCharm = c.id
+            for _, other in ipairs(grid:getChildren()) do other:setChecked(other == card) end
+            fillCharmInfo()
+        end
+    end
+    fillCharmInfo()
+    fillCreatureList()
+end
+
+function unlockCharm()
+    if selectedCharm then send(4, function(msg) msg:addU8(selectedCharm) end) end
+end
+
+function assignCharm()
+    if not selectedCharm then return end
+    local list = window:recursiveGetChildById('creatureList')
+    local row
+    for _, child in ipairs(list:getChildren()) do if child:isChecked() then row = child end end
+    if not row or not row.race then
+        displayInfoBox(tr('Charm'), tr('Select a creature first.'))
+        return
+    end
+    send(5, function(msg) msg:addU8(selectedCharm); msg:addU16(row.race) end)
+end
+
+function removeCharm()
+    if selectedCharm then send(6, function(msg) msg:addU8(selectedCharm) end) end
+end
+
+-- Abas e janela ----------------------------------------------------------------------------
+function showTab(name)
+    if not window then return end
+    currentTab = name
+    window:recursiveGetChildById('bestiaryTab'):setChecked(name == 'bestiary')
+    window:recursiveGetChildById('charmTab'):setChecked(name == 'charm')
+    window:recursiveGetChildById('achievementsTab'):setChecked(name == 'achievements')
+    window:getChildById('bestiaryPanel'):setVisible(name == 'bestiary')
+    window:getChildById('charmPanel'):setVisible(name == 'charm')
+    window:getChildById('achievementsPanel'):setVisible(name == 'achievements')
+    if name == 'charm' then send(3) end
+    if name == 'bestiary' and not detailRace then send(1) end
+end
+
+function show()
+    if not window then return end
+    window:show()
+    window:raise()
+    window:focus()
+    backToGrid()
+    showTab(currentTab == 'achievements' and 'bestiary' or currentTab)
+    updatePoints()
+    send(1)
+    send(3)
+    send(10)
+end
+
+function hide()
+    if window then window:hide() end
+end
+
+function toggle()
+    if window and window:isVisible() then hide() else show() end
+end
+
+-- Tracker (janela) ------------------------------------------------------------------------
+function openTracker()
+    if not tracker then return end
+    if not tracker:getParent() then
+        local panel = modules.game_interface.findContentPanelAvailable(tracker, tracker:getMinimumHeight())
+        if not panel then return end
+        panel:addChild(tracker)
+    end
+    if not tracker:isVisible() then tracker:open() end
+    fillTracker()
+    if #races == 0 then send(1) end
+end
+
+function toggleTracker()
+    if not tracker then return end
+    if tracker:isVisible() and tracker:getParent() then tracker:close() else openTracker() end
+end
+
+function onTrackerOpen()
+    fillTracker()
+end
+
+function onTrackerClose() updateTrackerAnimation() end
+
+-- Respostas do servidor ------------------------------------------------------------------
+local function readOverview(msg)
+    freePoints = msg:getU32()
+    earnedPoints = msg:getU32()
+    local list, map = {}, {}
+    for i = 1, msg:getU16() do
+        local r = { race = msg:getU16(), name = msg:getString(), lookType = msg:getU16() }
+        r.head, r.body, r.legs, r.feet = msg:getU8(), msg:getU8(), msg:getU8(), msg:getU8()
+        r.item = msg:getU16()
+        r.kills = msg:getU32()
+        r.stage = msg:getU8()
+        r.difficulty = msg:getU8()
+        r.thresholds = { msg:getU32(), msg:getU32(), msg:getU32() }
+        list[i] = r
+        map[r.race] = r
+    end
+    races, byRace = list, map
+    updatePoints()
+    if window and window:isVisible() and not detailRace then fillGrid() end
+    fillTracker()
+end
+
+-- resposta 2 (ficha antiga): lida e ignorada, o cliente usa a 8
+local function readRaceOld(msg)
+    msg:getU16(); msg:getString(); msg:getU8(); msg:getU8(); msg:getU32()
+    msg:getU32(); msg:getU32(); msg:getU32(); msg:getU16(); msg:getU8()
+    if msg:getU8() == 1 then msg:getU32(); msg:getU32(); msg:getU16(); msg:getU16(); msg:getU8() end
+    if msg:getU8() == 1 then
+        for i = 1, msg:getU8() do msg:getU16(); msg:getString(); msg:getU8(); msg:getU8() end
+    end
+end
+
+-- ficha v3 (resposta 12): loot em bloco próprio, com "?" desde a 1ª morte.
+-- Servidor antigo não responde o 12: depois de 1,2 s o cliente pede o 8.
+local race3Supported = nil
+function requestRace(race)
+    if race3Supported == false then
+        send(8, function(m) m:addU16(race) end)
+        return
+    end
+    send(12, function(m) m:addU16(race) end)
+    if race3Supported == nil then
+        scheduleEvent(function()
+            if race3Supported == nil and detailRace == race and not normalDetail then
+                race3Supported = false
+                send(8, function(m) m:addU16(race) end)
+            end
+        end, 1200)
+    end
+end
+
+local function readRace3(msg)
+    race3Supported = true
+    local d = { race = msg:getU16(), name = msg:getString(), stage = msg:getU8(), difficulty = msg:getU8() }
+    d.occurrence = msg:getU8()
+    d.kills = msg:getU32()
+    d.thresholds = { msg:getU32(), msg:getU32(), msg:getU32() }
+    d.charmPoints = msg:getU16()
+    d.charm = msg:getU8()
+    d.summon = msg:getU16()
+    d.convince = msg:getU8()
+    d.attack = msg:getU8()
+    if msg:getU8() == 1 then
+        d.info = { hp = msg:getU32(), exp = msg:getU32(), speed = msg:getU16(), armor = msg:getU16(), immune = msg:getU8() }
+        d.locations = {}
+        for i = 1, msg:getU8() do d.locations[i] = msg:getString() end
+    end
+    if msg:getU8() == 1 then
+        d.loot = {}
+        for i = 1, msg:getU8() do
+            local it = { id = msg:getU16(), name = msg:getString(), rarity = msg:getU8(), max = msg:getU8() }
+            it.revealed = msg:getU8() == 1
+            d.loot[i] = it
+        end
+    end
+    onRace(d)
+end
+
+local function readRace2(msg)
+    local d = { race = msg:getU16(), name = msg:getString(), stage = msg:getU8(), difficulty = msg:getU8() }
+    d.occurrence = msg:getU8()
+    d.kills = msg:getU32()
+    d.thresholds = { msg:getU32(), msg:getU32(), msg:getU32() }
+    d.charmPoints = msg:getU16()
+    d.charm = msg:getU8()
+    d.summon = msg:getU16()
+    d.convince = msg:getU8()
+    d.attack = msg:getU8()
+    if msg:getU8() == 1 then
+        d.info = { hp = msg:getU32(), exp = msg:getU32(), speed = msg:getU16(), armor = msg:getU16(), immune = msg:getU8() }
+        d.locations = {}
+        for i = 1, msg:getU8() do d.locations[i] = msg:getString() end
+        d.loot = {}
+        for i = 1, msg:getU8() do
+            local it = { id = msg:getU16(), name = msg:getString(), rarity = msg:getU8(), max = msg:getU8() }
+            it.revealed = msg:getU8() == 1
+            d.loot[i] = it
+        end
+    end
+    onRace(d)
+end
+
+local function readCharms(msg)
+    freePoints = msg:getU32()
+    local list = {}
+    for i = 1, msg:getU8() do
+        local c = { id = msg:getU8(), name = msg:getString(), description = msg:getString(), cost = msg:getU16() }
+        c.unlocked = msg:getU8() == 1
+        c.race = msg:getU16()
+        c.raceName = msg:getString()
+        list[i] = c
+    end
+    charms = list
+    local comp = {}
+    for i = 1, msg:getU16() do
+        comp[i] = { race = msg:getU16(), name = msg:getString(), charm = msg:getU8() }
+    end
+    completed = comp
+    updatePoints()
+    fillCharms()
+    if detail and detail.stage >= 3 then fillCharmSelector(detail) end
+end
+
+local function readEliteRace(msg)
+    local d = { race = msg:getU16(), stage = msg:getU8(), kills = msg:getU32(), goal = msg:getU32() }
+    d.points = msg:getU16()
+    d.complete = msg:getU8() == 1
+    d.hp, d.exp, d.speed, d.armor = msg:getU32(), msg:getU32(), msg:getU16(), msg:getU16()
+    d.lootRolls = msg:getU8()
+    local e = eliteOf(d.race)
+    e.kills[d.stage], e.goals[d.stage] = d.kills, d.goal
+    onEliteRace(d)
+end
+
+local function readEliteOverview(msg)
+    eliteFree = msg:getU32()
+    eliteEarned = msg:getU32()
+    for _ = 1, msg:getU16() do
+        local race = msg:getU16()
+        local e = eliteOf(race)
+        for i = 1, 3 do e.kills[i] = msg:getU32() end
+        for i = 1, 3 do e.goals[i] = msg:getU32() end
+    end
+    updatePoints()
+    fillTracker()
+end
+
+local function readEliteKill(msg)
+    local race, stage, kills = msg:getU16(), msg:getU8(), msg:getU32()
+    local complete = msg:getU8() == 1
+    local e = eliteOf(race)
+    local wasComplete = (e.kills[stage] or 0) >= (e.goals[stage] or 1)
+    e.kills[stage] = kills
+    if isTracked(race, stage) then fillTracker() end
+    if window and window:isVisible() then
+        if detailRace == race and detailStage == stage then
+            send(9, function(m) m:addU16(race); m:addU8(stage) end)
+        end
+        if complete and not wasComplete then send(10) end -- pontos novos
+    end
+end
+
+local function readKill(msg)
+    local race, kills, stage = msg:getU16(), msg:getU32(), msg:getU8()
+    local r = byRace[race]
+    local stageChanged = false
+    if r then
+        stageChanged = r.stage ~= stage
+        r.kills, r.stage = kills, stage
+    elseif #races > 0 then
+        send(1) -- criatura nova na lista: pede a lista de novo
+    end
+    if isTracked(race) then fillTracker() end
+    if window and window:isVisible() then
+        if detailRace == race and detailStage == 0 then
+            requestRace(race)
+        elseif not detailRace and currentTab == 'bestiary' then
+            fillGrid()
+        end
+        if stageChanged and stage >= 3 then send(1); send(3) end
+    end
+end
+
+local function onBestiary(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then readOverview(msg)
+    elseif sub == 2 then readRaceOld(msg)
+    elseif sub == 3 then readCharms(msg)
+    elseif sub == 7 then readKill(msg)
+    elseif sub == 8 then readRace2(msg)
+    elseif sub == 12 then readRace3(msg)
+    elseif sub == 9 then readEliteRace(msg)
+    elseif sub == 10 then readEliteOverview(msg)
+    elseif sub == 11 then readEliteKill(msg)
+    end
+end
+
+-- Ciclo de vida ----------------------------------------------------------------------------
+local function onGameStart()
+    races, byRace, charms, completed = {}, {}, {}, {}
+    freePoints, earnedPoints = 0, 0
+    elites, eliteFree, eliteEarned = {}, 0, 0
+    detailRace, detail, selectedCharm, page, filter = nil, nil, nil, 1, ''
+    detailStage, normalDetail, eliteDetail = 0, nil, nil
+    loadTracked()
+    fillTracker()
+    if #tracked > 0 then scheduleEvent(function() send(1); send(10) end, 1500) end
+end
+
+local function onGameEnd()
+    hide()
+end
+
+function init()
+    window = g_ui.displayUI('cyclopedia74')
+    window:hide()
+    tracker = g_ui.loadUI('bestiarytracker74')
+    tracker:setup()
+    tracker:keepBasicButtons()
+    local menuButton = tracker:getChildById('trackerMenuButton')
+    if menuButton then menuButton.onClick = function() trackerMenu(menuButton) end end
+    tracker:setContentMinimumHeight(30)
+    tracker:close()
+    window:recursiveGetChildById('bestiaryTab'):getChildById('icon'):setImageSource('/game_cyclopedia74/images/tab-bestiary')
+    window:recursiveGetChildById('charmTab'):getChildById('icon'):setImageSource('/game_cyclopedia74/images/tab-charms')
+    window:recursiveGetChildById('charmTab'):getChildById('icon'):setMarginLeft(3)
+    local ach = window:recursiveGetChildById('achievementsTab'):getChildById('icon')
+    ach:setImageSource('/game_cyclopedia74/images/icon-achievements')
+    ach:setSize({ width = 26, height = 26 })
+    ach:setMarginLeft(5)
+    local stageCombo = window:recursiveGetChildById('stageCombo')
+    if stageCombo then
+        for stage = 0, 3 do stageCombo:addOption(tr('Stage') .. ': ' .. tr(STAGE_NAMES[stage]), stage) end
+        stageCombo.onOptionChange = function(combo) onStageChange(combo) end
+    end
+    ProtocolGame.registerOpcode(OPCODE, onBestiary)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if window then window:destroy(); window = nil end
+    if animEvent then removeEvent(animEvent); animEvent = nil end
+    if tracker then tracker:destroy(); tracker = nil end
+end

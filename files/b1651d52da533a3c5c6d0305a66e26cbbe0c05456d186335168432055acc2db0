@@ -1,0 +1,38 @@
+// Loot Statistics (coluna)
+Hunt74StatMiniWindow
+  id: hunt74LootWindow
+  height: 260
+  @onOpen: modules.game_hunt74.onStatsOpen('loot')
+  @onClose: modules.game_hunt74.onStatsClose('loot')
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    padding-bottom: 7
+    layout:
+      type: verticalBox
+    Hunt74StatRow
+      id: lootType
+    Hunt74GoldRow
+      id: supply
+    Hunt74GoldRow
+      id: loot
+    Hunt74GoldRow
+      id: lootHour
+    Hunt74GoldRow
+      id: profit
+    Hunt74GoldRow
+      id: profitHour
+    Hunt74Separator
+    Hunt74Caption
+      id: lootedCaption
+    Hunt74ItemGrid
+      id: lootedItems
+    Hunt74Separator
+    Hunt74Caption
+      id: suppliesCaption
+    Hunt74ItemGrid
+      id: suppliesUsed
+
+  MiniWindowCorner74

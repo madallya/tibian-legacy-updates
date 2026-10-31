@@ -1,0 +1,10 @@
+Module
+  name: game_atributos74
+  description: Moldura dos itens com atributos (1 a 5), como no Miracle (comando 0xEB, atributos.hh no servidor)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ atributos74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

@@ -1,0 +1,299 @@
+-- Quest Log e Quest Tracker (OTServ 7.4 / Tibian Legacy), no estilo do Miracle.
+-- O servidor monta a lista a partir dos QuestValues do personagem e do arquivo
+-- quests.txt (ver src/game/questlog.hh): o cliente pede com o comando 0xE4 e
+-- recebe a resposta no mesmo código.
+
+local OPCODE = 0xE4
+local CHECK_DONE = '/images/ui/checkbox-checked'
+local CHECK_TODO = '/images/ui/checkbox-unchecked'
+
+local window
+local tracker
+local quests = {}       -- última lista recebida
+local showing = nil     -- nome da quest aberta em "Show"
+local tracked = {}      -- nomes acompanhados no Quest Tracker
+local refreshEvent
+
+-- Quest Tracker: quests acompanhadas guardadas por personagem ---------------------
+local function trackerKey()
+    return 'classic74_questTracker_' .. (g_game.getCharacterName() or '')
+end
+
+local function loadTracked()
+    tracked = {}
+    local text = g_settings.getString(trackerKey()) or ''
+    for name in text:gmatch('[^\n]+') do table.insert(tracked, name) end
+end
+
+local function saveTracked()
+    g_settings.set(trackerKey(), table.concat(tracked, '\n'))
+end
+
+local function isTracked(name)
+    for _, n in ipairs(tracked) do if n == name then return true end end
+    return false
+end
+
+local function findQuest(name)
+    for _, q in ipairs(quests) do if q.name == name then return q end end
+end
+
+-- Pedido e resposta -----------------------------------------------------------------
+function request()
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then return end
+    if modules.game_livecam74 and modules.game_livecam74.isSpectating and modules.game_livecam74.isSpectating() then
+        return
+    end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    protocol:send(msg)
+end
+
+local refreshAll
+
+local function onQuestLog(protocol, msg)
+    local list = {}
+    local count = msg:getU16()
+    for i = 1, count do
+        local q = { name = msg:getString(), completed = msg:getU8() == 1, missions = {} }
+        local missions = msg:getU8()
+        for j = 1, missions do
+            local m = { name = msg:getString(), done = msg:getU8() == 1 }
+            m.text = msg:getString()
+            q.missions[j] = m
+        end
+        list[i] = q
+    end
+    setQuests(list)
+end
+
+-- mostra uma lista já lida (também usado para testar a janela sem servidor)
+function setQuests(list)
+    quests = list or {}
+    refreshAll()
+end
+
+-- Quest Log ---------------------------------------------------------------------------
+local function setShowMode(on)
+    if not window then return end
+    for _, id in ipairs({ 'questList', 'questScroll' }) do window:getChildById(id):setVisible(not on) end
+    for _, id in ipairs({ 'missionList', 'missionScroll', 'missionText' }) do window:getChildById(id):setVisible(on) end
+    window:getChildById('emptyLabel'):setVisible(not on and #quests == 0)
+    window:getChildById('showButton'):setText(on and tr('Back') or tr('Show'))
+    window:setText(on and showing or tr('Quest Log'))
+end
+
+local function fillMissions()
+    local list = window:getChildById('missionList')
+    local text = window:getChildById('missionText')
+    list:destroyChildren()
+    text:setText('')
+    local quest = showing and findQuest(showing)
+    if not quest then
+        showing = nil
+        setShowMode(false)
+        return
+    end
+    window:setText(quest.name)
+    for _, m in ipairs(quest.missions) do
+        local row = g_ui.createWidget('QuestLine74Row', list)
+        row:getChildById('check'):setImageSource(m.done and CHECK_DONE or CHECK_TODO)
+        row:getChildById('name'):setText(m.name)
+        row:getChildById('name'):setColor(m.done and '#dfdfdf' or '#9d9d9d')
+        row.mission = m
+    end
+    list.onChildFocusChange = function(_, child)
+        if child and child.mission then
+            local m = child.mission
+            text:setText(m.done and m.text or tr('Not done yet.'))
+        end
+    end
+    local first = list:getFirstChild()
+    if first then list:focusChild(first) end
+end
+
+local function fillQuests()
+    local list = window:getChildById('questList')
+    local selected = list:getFocusedChild()
+    local selectedName = selected and selected.questName
+    list:destroyChildren()
+    for _, q in ipairs(quests) do
+        local row = g_ui.createWidget('QuestLog74Row', list)
+        row:setText(q.completed and (q.name .. ' ' .. tr('(completed)')) or q.name)
+        row.questName = q.name
+        row.onDoubleClick = function() showQuest(q.name) end
+        if q.name == selectedName then list:focusChild(row) end
+    end
+    if not list:getFocusedChild() and list:getFirstChild() then list:focusChild(list:getFirstChild()) end
+    window:getChildById('emptyLabel'):setText(tr('You have not started any quest yet.'))
+    window:getChildById('emptyLabel'):setVisible(#quests == 0 and not showing)
+end
+
+function showQuest(name)
+    showing = name
+    setShowMode(true)
+    fillMissions()
+end
+
+function toggleShow()
+    if not window then return end
+    if showing then
+        showing = nil
+        setShowMode(false)
+        return
+    end
+    local selected = window:getChildById('questList'):getFocusedChild()
+    if selected and selected.questName then showQuest(selected.questName) end
+end
+
+function show()
+    if not window then return end
+    showing = nil
+    setShowMode(false)
+    fillQuests()
+    window:show()
+    window:raise()
+    window:focus()
+    request()
+end
+
+function hide()
+    if window then window:hide() end
+end
+
+function toggle()
+    if window and window:isVisible() then hide() else show() end
+end
+
+-- Quest Tracker -------------------------------------------------------------------------
+local function fillTracker()
+    if not tracker then return end
+    local contents = tracker:getChildById('contentsPanel')
+    contents:destroyChildren()
+    local any = false
+    for _, name in ipairs(tracked) do
+        local q = findQuest(name)
+        local title = g_ui.createWidget('QuestTracker74Title', contents)
+        title:setText(name)
+        title.onMouseRelease = function(widget, pos, button)
+            if button == MouseRightButton then
+                local menu = g_ui.createWidget('PopupMenu')
+                menu:addOption(tr('Stop tracking'), function() untrack(name) end)
+                menu:display(pos)
+                return true
+            end
+        end
+        any = true
+        for _, m in ipairs(q and q.missions or {}) do
+            local row = g_ui.createWidget('QuestTracker74Mission', contents)
+            row:getChildById('check'):setImageSource(m.done and CHECK_DONE or CHECK_TODO)
+            row:getChildById('name'):setText(m.name)
+            row:getChildById('name'):setColor(m.done and '#ffffff' or '#9d9d9d')
+            if m.done and m.text ~= '' then
+                local text = g_ui.createWidget('QuestTracker74Text', contents)
+                text:setText(m.text)
+            end
+        end
+    end
+    if not any then
+        local label = g_ui.createWidget('QuestTracker74Text', contents)
+        label:setText(tr('Select a quest in the Quest Log and press "Quest Tracker".'))
+    end
+end
+
+refreshAll = function()
+    if window and window:isVisible() then
+        if showing then fillMissions() else fillQuests() end
+    end
+    fillTracker()
+end
+
+function untrack(name)
+    for i, n in ipairs(tracked) do
+        if n == name then table.remove(tracked, i); break end
+    end
+    saveTracked()
+    fillTracker()
+end
+
+function openTracker()
+    if not tracker then return end
+    if not tracker:isVisible() or not tracker:getParent() then
+        if not tracker:getParent() then
+            local panel = modules.game_interface.findContentPanelAvailable(tracker, tracker:getMinimumHeight())
+            if not panel then return end
+            panel:addChild(tracker)
+        end
+        tracker:open()
+    end
+    fillTracker()
+    request()
+end
+
+function toggleTracker()
+    if not tracker then return end
+    if tracker:isVisible() and tracker:getParent() then tracker:close() else openTracker() end
+end
+
+function trackSelected()
+    if not window then return end
+    local name = showing
+    if not name then
+        local selected = window:getChildById('questList'):getFocusedChild()
+        name = selected and selected.questName
+    end
+    if name and not isTracked(name) then
+        table.insert(tracked, name)
+        saveTracked()
+    end
+    openTracker()
+end
+
+function onTrackerOpen()
+    if refreshEvent then removeEvent(refreshEvent) end
+    -- o 7.4 não avisa quando um QuestValue muda: atualiza de tempos em tempos
+    refreshEvent = cycleEvent(function()
+        if tracker and tracker:isVisible() and #tracked > 0 then request() end
+    end, 30000)
+end
+
+function onTrackerClose()
+    if refreshEvent then removeEvent(refreshEvent); refreshEvent = nil end
+end
+
+-- Ciclo de vida ---------------------------------------------------------------------------
+local function onGameStart()
+    quests = {}
+    loadTracked()
+    if tracker and tracker:isVisible() and #tracked > 0 then
+        scheduleEvent(request, 1000)
+    end
+    fillTracker()
+end
+
+local function onGameEnd()
+    hide()
+    quests = {}
+end
+
+function init()
+    window = g_ui.displayUI('questlog74')
+    window:hide()
+    tracker = g_ui.loadUI('questtracker74')
+    tracker:setup()
+    tracker:keepBasicButtons()
+    tracker:setContentMinimumHeight(40)
+    tracker:close()
+    ProtocolGame.registerOpcode(OPCODE, onQuestLog)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    onTrackerClose()
+    if window then window:destroy(); window = nil end
+    if tracker then tracker:destroy(); tracker = nil end
+end

@@ -1,0 +1,79 @@
+// Quest Tracker no estilo do Miracle: na coluna, as quests acompanhadas com as
+// missões (marca verde quando feita) e o texto da missão feita.
+
+QuestTracker74Title < Label
+  font: verdana-11px-antialised
+  color: #ffffff
+  text-wrap: false
+  height: 15
+  margin-top: 3
+
+QuestTracker74Mission < UIWidget
+  height: 14
+
+  UIWidget
+    id: check
+    anchors.left: parent.left
+    anchors.top: parent.top
+    margin-top: 1
+    size: 12 12
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: check.right
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-left: 4
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    height: 14
+    phantom: true
+
+QuestTracker74Text < Label
+  padding-left: 16
+  font: verdana-11px-antialised
+  color: #c0c0c0
+  text-wrap: true
+  text-auto-resize: true
+
+MiniWindow
+  id: questTracker74Window
+  height: 120
+  &save: true
+  @onOpen: modules.game_questlog74.onTrackerOpen()
+  @onClose: modules.game_questlog74.onTrackerClose()
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/options/button_questlog_tracker
+    image-clip: 0 0 20 20
+    size: 12 12
+    image-smooth: true
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('Quest Tracker')
+    color: #9d9d9dff
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    layout:
+      type: verticalBox
+
+  MiniWindowCorner74

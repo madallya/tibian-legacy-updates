@@ -1,0 +1,244 @@
+-- Highscore (OTServ 7.4 / Tibian Legacy), no estilo do cliente do Miracle.
+-- O ranking vem do servidor (highscores.cc): o cliente pede uma página com o
+-- comando 0xE2 e recebe a resposta no mesmo código. Ver o protocolo em
+-- src/game/highscores.hh do servidor.
+
+local OPCODE = 0xE2
+local PAGE_SIZE = 20
+
+local window
+local rowWidgets = {}
+local state = { category = 0, vocations = 31, page = 1, pages = 1 }
+local waiting = false
+
+local categories = {
+    { text = 'Experience Points', id = 0 },
+    { text = 'Magic Level', id = 1 },
+    { text = 'Fist Fighting', id = 2 },
+    { text = 'Club Fighting', id = 3 },
+    { text = 'Sword Fighting', id = 4 },
+    { text = 'Axe Fighting', id = 5 },
+    { text = 'Distance Fighting', id = 6 },
+    { text = 'Shielding', id = 7 },
+    { text = 'Fishing', id = 8 },
+}
+
+local vocationNames = {
+    [0] = 'None', [1] = 'Knight', [2] = 'Paladin', [3] = 'Sorcerer', [4] = 'Druid',
+    [11] = 'Elite Knight', [12] = 'Royal Paladin', [13] = 'Master Sorcerer', [14] = 'Elder Druid',
+}
+
+-- caixa de vocação -> bit do filtro (igual ao servidor)
+local vocationBoxes = {
+    { id = 'vocKnight', bit = 1 },
+    { id = 'vocPaladin', bit = 2 },
+    { id = 'vocSorcerer', bit = 4 },
+    { id = 'vocDruid', bit = 8 },
+    { id = 'vocNone', bit = 16 },
+}
+
+local function formatPoints(n)
+    local s = string.format('%.0f', n)
+    local out = s:reverse():gsub('(%d%d%d)', '%1.'):reverse()
+    if out:sub(1, 1) == '.' then out = out:sub(2) end
+    return out
+end
+
+local function setStatus(text)
+    if not window then return end
+    window:recursiveGetChildById('statusLabel'):setText(text or '')
+end
+
+local function sendRequest(ownRank)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then
+        setStatus(tr('You are not online.'))
+        return
+    end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(state.category)
+    msg:addU8(state.vocations)
+    msg:addU8(ownRank and 1 or 0)
+    msg:addU16(state.page)
+    protocol:send(msg)
+    waiting = true
+    setStatus(tr('Loading...'))
+end
+
+local function readVocations()
+    local mask = 0
+    for _, box in ipairs(vocationBoxes) do
+        local widget = window:recursiveGetChildById(box.id)
+        if widget and widget:isChecked() then mask = mask + box.bit end
+    end
+    return mask
+end
+
+local function clearRows()
+    for _, row in ipairs(rowWidgets) do
+        row:setVisible(false)
+        row:setOn(false)
+    end
+end
+
+local function showTop(entry)
+    local creature = window:recursiveGetChildById('topCreature')
+    local labels = { 'topRank', 'topName', 'topVocation', 'topLevel', 'topPoints' }
+    if not entry then
+        creature:setOutfit({ type = 0 })
+        for _, id in ipairs(labels) do window:recursiveGetChildById(id):setText('') end
+        return
+    end
+    creature:setOutfit({ type = entry.lookType, head = entry.head, body = entry.body, legs = entry.legs, feet = entry.feet })
+    window:recursiveGetChildById('topRank'):setText('#' .. entry.rank)
+    window:recursiveGetChildById('topName'):setText(entry.name)
+    window:recursiveGetChildById('topVocation'):setText(tr(vocationNames[entry.profession] or 'None'))
+    window:recursiveGetChildById('topLevel'):setText(tr('Level') .. ': ' .. entry.level)
+    window:recursiveGetChildById('topPoints'):setText(formatPoints(entry.points))
+end
+
+local function onHighscore(protocol, msg)
+    local category = msg:getU8()
+    local vocations = msg:getU8()
+    local page = msg:getU16()
+    local pages = msg:getU16()
+    local total = msg:getU32()
+    local age = msg:getU32()
+    local count = msg:getU8()
+    local entries = {}
+    for i = 1, count do
+        local e = {}
+        e.rank = msg:getU32()
+        e.name = msg:getString()
+        e.profession = msg:getU8()
+        e.level = msg:getU16()
+        local high = msg:getU32()
+        local low = msg:getU32()
+        e.points = high * 4294967296 + low
+        e.lookType = msg:getU16()
+        e.head = msg:getU8()
+        e.body = msg:getU8()
+        e.legs = msg:getU8()
+        e.feet = msg:getU8()
+        entries[i] = e
+    end
+    showResult({ category = category, vocations = vocations, page = page, pages = pages,
+        total = total, age = age, entries = entries })
+end
+
+-- mostra uma página já lida (também usado para testar a janela sem servidor)
+function showResult(result)
+    if not window then return end
+    local category, page, pages, total, age, entries =
+        result.category, result.page, result.pages, result.total, result.age, result.entries
+    waiting = false
+    state.page, state.pages = page, math.max(1, pages)
+
+    clearRows()
+    local own = g_game.getCharacterName()
+    for i, e in ipairs(entries) do
+        local row = rowWidgets[i]
+        row:getChildById('rank'):setText(tostring(e.rank))
+        row:getChildById('name'):setText(e.name)
+        row:getChildById('vocation'):setText(tr(vocationNames[e.profession] or 'None'))
+        row:getChildById('level'):setText(tostring(e.level))
+        row:getChildById('points'):setText(formatPoints(e.points))
+        row:setOn(e.name == own)
+        row:setVisible(true)
+    end
+    -- o primeiro colocado da categoria aparece à esquerda (só vem na página 1)
+    if page == 1 then showTop(entries[1]) end
+    window:recursiveGetChildById('pageLabel'):setText(string.format('%d / %d', state.page, state.pages))
+    if total == 0 then
+        setStatus(tr('No characters in this ranking yet.'))
+    else
+        setStatus('')
+    end
+    local minutes = math.floor(age / 60)
+    window:getChildById('updatedLabel'):setText(minutes > 0 and tr('Updated %d min ago', minutes) or tr('Updated just now'))
+    -- se o servidor mandou a página 1 de outra categoria (ex.: pedido antigo), ignora o topo
+    if category ~= state.category then showTop(nil) end
+end
+
+local function request(resetPage, ownRank)
+    if resetPage then state.page = 1 end
+    state.vocations = readVocations()
+    if state.vocations == 0 then
+        clearRows()
+        showTop(nil)
+        setStatus(tr('Select at least one vocation.'))
+        return
+    end
+    sendRequest(ownRank)
+end
+
+function changePage(delta)
+    local page = math.max(1, math.min(state.pages, state.page + delta))
+    if page == state.page then return end
+    state.page = page
+    request(false)
+end
+
+function showOwnRank()
+    request(false, true)
+end
+
+function show()
+    if not window then return end
+    window:show()
+    window:raise()
+    window:focus()
+    request(true)
+end
+
+function hide()
+    if window then window:hide() end
+end
+
+function toggle()
+    if window and window:isVisible() then hide() else show() end
+end
+
+local function onGameEnd()
+    hide()
+end
+
+function init()
+    window = g_ui.displayUI('highscore74')
+    window:hide()
+
+    local rows = window:recursiveGetChildById('rows')
+    for i = 1, PAGE_SIZE do
+        local row = g_ui.createWidget('Highscore74Row', rows)
+        row:setVisible(false)
+        rowWidgets[i] = row
+    end
+
+    local combo = window:recursiveGetChildById('categoryCombo')
+    for _, c in ipairs(categories) do combo:addOption(tr(c.text), c.id) end
+    combo:setCurrentIndex(1)
+    combo.onOptionChange = function(self, text, data)
+        state.category = data
+        showTop(nil)
+        if window:isVisible() then request(true) end
+    end
+
+    for _, box in ipairs(vocationBoxes) do
+        local widget = window:recursiveGetChildById(box.id)
+        widget:setChecked(true)
+        widget.onCheckChange = function()
+            if window:isVisible() then request(true) end
+        end
+    end
+
+    ProtocolGame.registerOpcode(OPCODE, onHighscore)
+    connect(g_game, { onGameEnd = onGameEnd })
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameEnd = onGameEnd })
+    if window then window:destroy(); window = nil end
+    rowWidgets = {}
+end

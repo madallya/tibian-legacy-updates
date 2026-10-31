@@ -1,0 +1,153 @@
+// Bestiary Tracker no estilo do Miracle: na coluna, as criaturas acompanhadas
+// com o nome, o boneco sem moldura e a barra em 3 partes (uma por estagio do
+// bestiario), com o total de mortes no meio.
+
+// barra afundada como a do Miracle: moldura escura em cima/esquerda e clara
+// embaixo/direita, miolo escuro e preenchimento laranja em degrade
+BestiaryTracker74Bar < UIWidget
+  height: 18
+  image-source: /images/ui/bar_frame74
+  image-border: 1
+  phantom: true
+
+  UIWidget
+    id: fill
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    margin: 1
+    width: 0
+    image-source: /images/ui/bar_fill74
+    image-repeated: true
+    phantom: true
+
+  Label
+    id: text
+    anchors.fill: parent
+    text-align: center
+    text-offset: 0 1
+    font: verdana-11px-rounded
+    color: #ffffff
+    phantom: true
+
+BestiaryTracker74Row < UIWidget
+  height: 46
+
+  // boneco andando no lugar, enquadrado pelo sqm dele (1x1 ou 2x2), como o
+  // gif do Miracle; criaturas grandes (lion, dragon) ficam na mesma escala visual
+  UICreature
+    id: creature
+    anchors.left: parent.left
+    anchors.top: parent.top
+    margin-left: 4
+    margin-top: 0
+    size: 24 24
+    creature-fit-tile: true
+    creature-animate: true
+    phantom: true
+
+  Label
+    id: name
+    anchors.top: parent.top
+    anchors.left: creature.right
+    margin-left: 5
+    margin-top: 6
+    height: 14
+    font: verdana-11px-rounded
+    color: #ffffff
+    text-wrap: false
+    text-auto-resize: true
+    phantom: true
+  // elite creatures: estrelas depois do nome
+  UIWidget
+    id: stars
+    anchors.verticalCenter: name.verticalCenter
+    anchors.left: name.right
+    margin-left: 3
+    size: 9 10
+    image-source: /game_elite74/images/stars_card1
+    visible: false
+    phantom: true
+
+  BestiaryTracker74Bar
+    id: seg1
+    anchors.top: parent.top
+    anchors.left: parent.left
+    margin-top: 26
+    width: 40
+
+  BestiaryTracker74Bar
+    id: seg2
+    anchors.top: seg1.top
+    anchors.left: seg1.right
+    margin-left: 1
+    width: 40
+
+  BestiaryTracker74Bar
+    id: seg3
+    anchors.top: seg1.top
+    anchors.left: seg2.right
+    anchors.right: parent.right
+    margin-left: 2
+
+BestiaryTracker74Empty < Label
+  font: verdana-11px-antialised
+  color: #9d9d9d
+  text-wrap: true
+  text-auto-resize: true
+
+MiniWindow
+  id: bestiaryTracker74Window
+  height: 80
+  &save: true
+  @onOpen: modules.game_cyclopedia74.onTrackerOpen()
+  @onClose: modules.game_cyclopedia74.onTrackerClose()
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/options/bestiaryTracker
+    image-clip: 0 0 20 20
+    size: 12 12
+    image-smooth: true
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('Bestiary Tracker')
+    color: #9d9d9dff
+
+  // botao de menu (ordem e limpar o tracker), a esquerda do cadeado como no Miracle
+  UIButton
+    id: trackerMenuButton
+    anchors.top: lockButton.top
+    anchors.right: lockButton.left
+    margin-right: 2
+    size: 12 12
+    image-size: 14 14
+    image-source: /images/ui/miniwindow_buttons
+    image-clip: 112 0 14 14
+    $hover:
+      image-clip: 112 14 14 14
+    $pressed:
+      image-clip: 112 28 14 14
+
+  MiniWindowContents
+    padding-left: 3
+    padding-right: 3
+    padding-top: 3
+    layout:
+      type: verticalBox
+      spacing: 2
+
+  MiniWindowCorner74

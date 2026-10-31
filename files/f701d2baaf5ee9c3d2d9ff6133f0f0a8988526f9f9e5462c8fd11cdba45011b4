@@ -1,0 +1,471 @@
+-- Janela de opções no estilo do cliente do Miracle.
+-- Cada opção que já existe no OTClient é lida e gravada pelo client_options
+-- (getOption/setOption), então o comportamento continua o mesmo. As opções
+-- novas (marcadas com custom) ficam no config.otml com o prefixo classic74_.
+
+local window
+local tabBar
+local panels = {}
+local widgetsByKey = {}
+-- Screenshots em %APPDATA%\<nome do jogo>\screenshots (Telmora), fora da pasta de
+-- configuracoes (g_app.getScreenshotsDir / doScreenshotTo no cliente). Cliente antigo
+-- sem essas funcoes: pasta screenshots das configuracoes, como antes.
+local screenshotsDir = 'screenshots'
+
+local function screenshotsFolder()
+    if g_app.getScreenshotsDir then return g_app.getScreenshotsDir() end
+    if not g_resources.directoryExists('/' .. screenshotsDir) then g_resources.makeDir(screenshotsDir) end
+    return g_resources.getWriteDir() .. screenshotsDir
+end
+
+local function opt(key)
+    return modules.client_options.getOption(key)
+end
+
+local function setOpt(key, value)
+    modules.client_options.setOption(key, value)
+end
+
+-- Opções novas ------------------------------------------------------------------
+local customDefaults = {
+    wsadWalking = false,            -- WASD so quando o jogador liga em Options
+    walkFirstStepDelay = 200,
+    walkDirChangeDelay = 0,
+    camsRecording = true,
+    screenshotOnDeath = false,
+    screenshotOnLevelUp = false,
+    screenshotOnMagicLevel = false,
+    screenshotOnSkill = false,
+    -- opções do Miracle que o OTClient não tinha (features74.lua)
+    smoothWalking = false,
+    lockCorpses = false,
+    liveCam = false,
+    displayPlayerHealth = true,
+    creatureIcons = true,
+    corpseShader = true,
+    leftMinimapPanel = false,
+    rightMinimapPanel = false,
+    containerPanel = 1,
+    ownDamageMessages = false,
+    openChatOnPrivate = false,
+    displaySelfMessages = true,
+    displayPlayersMessages = true,
+}
+
+function getCustom(key)
+    local default = customDefaults[key]
+    local settingKey = 'classic74_' .. key
+    if not g_settings.exists(settingKey) then return default end
+    if type(default) == 'boolean' then return g_settings.getBoolean(settingKey) end
+    if type(default) == 'number' then return g_settings.getNumber(settingKey) end
+    return g_settings.get(settingKey)
+end
+
+local customActions = {
+    walkFirstStepDelay = function(value)
+        local root = modules.game_interface and modules.game_interface.getRootPanel and modules.game_interface.getRootPanel()
+        if root then root:setAutoRepeatDelay(value) end
+    end,
+    wsadWalking = function(value)
+        if modules.client_classic74 and modules.client_classic74.updateChatToggle then
+            modules.client_classic74.updateChatToggle()
+        end
+    end,
+    smoothWalking = function() applySmoothWalking() end,
+    liveCam = function()
+        if modules.game_livecam74 and modules.game_livecam74.sendSetting then modules.game_livecam74.sendSetting() end
+    end,
+    displayPlayerHealth = function() applyCreatureDrawing() end,
+    creatureIcons = function() applyCreatureDrawing() end,
+    corpseShader = function() applyCorpseShader() end,
+    containerPanel = function() applyContainerPanel() end,
+    -- só um painel horizontal de minimapa por vez
+    leftMinimapPanel = function(value)
+        if value and getCustom('rightMinimapPanel') then setCustom('rightMinimapPanel', false); refreshValues() end
+        applyMinimapPanels(value)
+    end,
+    rightMinimapPanel = function(value)
+        if value and getCustom('leftMinimapPanel') then setCustom('leftMinimapPanel', false); refreshValues() end
+        applyMinimapPanels(value)
+    end,
+}
+
+function setCustom(key, value)
+    g_settings.set('classic74_' .. key, value)
+    if customActions[key] then customActions[key](value) end
+end
+
+-- Descrição das abas ------------------------------------------------------------
+-- check: caixa de seleção | slider: barra | combo: lista | button: botão
+local function gpuText()
+    return string.format('GPU: %s\nVersion: %s', g_graphics.getRenderer(), g_graphics.getVersion())
+end
+
+-- Niveis de otimizacao (como no Miracle). "Otimizar" junta efeitos no mesmo
+-- tile e encurta a espera entre eles; o limite de FPS diz quando isso liga.
+-- fps = liga abaixo desses FPS | force = sempre | async = texturas em segundo plano
+local optimizationLevels = {
+    { text = 'Automatic', value = 1, optimize = true, fps = 58, force = false, async = false },
+    { text = 'None', value = 2, optimize = false, fps = 58, force = false, async = false },
+    { text = 'Low', value = 3, optimize = true, fps = 30, force = false, async = false },
+    { text = 'Medium', value = 4, optimize = true, fps = 45, force = false, async = true },
+    { text = 'High', value = 5, optimize = true, fps = 1000, force = false, async = true },
+    { text = 'Maximum', value = 6, optimize = true, fps = 1000, force = true, async = true },
+}
+
+local function currentOptimizationIndex()
+    local saved = tonumber(g_settings.getNumber('classic74_optimizationLevel')) or 0
+    if optimizationLevels[saved] then return saved end
+    -- configuracao antiga (so optimizeFps/forceEffectOptimization)
+    if not opt('optimizeFps') then return 2 end
+    if opt('forceEffectOptimization') then return 6 end
+    return 1
+end
+
+function applyOptimizationLevel(index)
+    local level = optimizationLevels[index or currentOptimizationIndex()]
+    if not level then return end
+    setOpt('optimizeFps', level.optimize)
+    setOpt('forceEffectOptimization', level.force)
+    if g_app.setOptimizeFpsThreshold then g_app.setOptimizeFpsThreshold(level.fps) end
+    if g_app.setLoadingAsyncTexture and not g_app.isEncrypted() then
+        g_app.setLoadingAsyncTexture(level.async)
+    end
+end
+
+local function setOptimizationIndex(index)
+    if not optimizationLevels[index] then return end
+    g_settings.set('classic74_optimizationLevel', index)
+    applyOptimizationLevel(index)
+end
+
+local tabs = {
+    {
+        name = 'Game', icon = '/images/optionstab/controls',
+        items = {
+            { check = 'classicControl', text = 'Classic control' },
+            { check = 'autoChaseOverride', text = 'Allow auto chase override' },
+            { check = 'wsadWalking', custom = true, text = 'Enable WSAD walking' },
+            { check = 'smartWalk', text = 'Enable smart walking' },
+            { check = 'smoothWalking', custom = true, text = 'Enable smooth walking' },
+            { check = 'moveStack', text = 'Enable move stacks directly' },
+            { check = 'lockCorpses', custom = true, text = 'Lock new corpses container' },
+            { check = 'liveCam', custom = true, text = 'Allow others to watch me (live cam)' },
+            { slider = 'hotkeyDelay', text = 'Hotkey delay: %d ms', min = 30, max = 250 },
+            { slider = 'walkFirstStepDelay', custom = true, text = 'Walk delay after first step: %d ms', min = 50, max = 500 },
+            { slider = 'walkDirChangeDelay', custom = true, text = 'Walk delay after turn: %d ms', min = 0, max = 500 },
+            { slider = 'walkTurnDelay', text = 'Walk delay after ctrl turn: %d ms', min = 10, max = 500 },
+            { slider = 'walkTeleportDelay', text = 'Walk delay after teleport and floor change: %d ms', min = 0, max = 500,
+              also = 'walkStairsDelay' },
+            { button = 'Change language', action = function()
+                if modules.client_locales and modules.client_locales.createWindow then
+                    modules.client_locales.createWindow()
+                end
+            end },
+            { separator = true },
+        }
+    },
+    {
+        name = 'Interface', icon = '/images/optionstab/graphics',
+        items = {
+            { check = 'showFps', text = 'Show framerate' },
+            { check = 'showPing', text = 'Show connection ping' },
+            { check = 'displayNames', text = 'Display creature names' },
+            { check = 'displayHealth', text = 'Show creatures health bar' },
+            { check = 'displayPlayerHealth', custom = true, text = 'Display player health bars' },
+            { check = 'displayMana', text = 'Show player mana bar' },
+            { check = 'healthManaCircle', text = 'Show health and mana circle',
+              get = function() return not g_settings.getBoolean('healthcircle_hpcircle') end,
+              set = function(value)
+                  local hc = modules.game_healthcircle
+                  if hc and hc.setHealthCircle then hc.setHealthCircle(value); hc.setManaCircle(value)
+                  else g_settings.set('healthcircle_hpcircle', not value); g_settings.set('healthcircle_mpcircle', not value) end
+              end },
+            { check = 'creatureIcons', custom = true, text = 'Show icons on creatures' },
+            { check = 'corpseShader', custom = true, text = 'Show brand-new corpse shader' },
+            { check = 'leftMinimapPanel', custom = true, text = 'Show left horizontal minimap panel' },
+            { check = 'rightMinimapPanel', custom = true, text = 'Show right horizontal minimap panel' },
+            { combo = 'containerPanel', custom = true, text = "Container's panel", options = containerPanelOptions },
+        }
+    },
+    {
+        name = 'Console', icon = '/images/optionstab/console',
+        items = {
+            { check = 'showInfoMessagesInConsole', text = 'Show info messages in console' },
+            { check = 'showEventMessagesInConsole', text = 'Show event messages in console' },
+            { check = 'showStatusMessagesInConsole', text = 'Show status messages in console' },
+            { check = 'ownDamageMessages', custom = true, text = 'Show own damage messages in console' },
+            { check = 'showTimestampsInConsole', text = 'Show timestamps in console' },
+            { check = 'showPrivateMessagesInConsole', text = 'Show private messages in console' },
+            { check = 'showPrivateMessagesOnScreen', text = 'Show private messages on screen' },
+            { check = 'openChatOnPrivate', custom = true, text = 'Open new chat when receive private message' },
+            { check = 'displaySelfMessages', custom = true, text = 'Display self character messages' },
+            { check = 'displayPlayersMessages', custom = true, text = 'Display players messages' },
+        }
+    },
+    {
+        name = 'Graphics', icon = '/images/optionstab/game',
+        items = {
+            { label = gpuText, id = 'gpuLabel' },
+            { separator = true },
+            { check = 'vsync', text = 'Enable vertical synchronization' },
+            { check = 'fullscreen', text = 'Fullscreen' },
+            { check = 'antialiasing', text = 'Antialiasing',
+              get = function() return (opt('antialiasingMode') or 0) ~= 0 end,
+              set = function(value) setOpt('antialiasingMode', value and 1 or 0) end },
+            { combo = 'optimizationLevel', text = 'Optimization level', options = optimizationLevels,
+              get = currentOptimizationIndex, set = setOptimizationIndex },
+            { label = 'High/Maximum optimization level may cause visual defects.' },
+            { slider = 'backgroundFrameRate', text = 'Game framerate limit: %s', min = 10, max = 501,
+              format = function(v) return (v <= 0 or v >= 501) and 'max' or tostring(v) end },
+        }
+    },
+    {
+        name = 'Media', icon = '/images/optionstab/media',
+        items = {
+            { check = 'camsRecording', custom = true, text = 'Cams Recording' },
+            { button = 'Cams Folder', action = function()
+                g_platform.openDir(g_resources.getWorkDir() .. 'records')
+            end },
+            { check = 'screenshotOnDeath', custom = true, text = 'Take screenshot on death' },
+            { check = 'screenshotOnLevelUp', custom = true, text = 'Take screenshot on level up' },
+            { check = 'screenshotOnMagicLevel', custom = true, text = 'Take screenshot on magic level advance' },
+            { check = 'screenshotOnSkill', custom = true, text = 'Take screenshot on skills advance' },
+            { button = 'Screenshots Folder', action = function()
+                g_platform.openDir(screenshotsFolder())
+            end },
+        }
+    },
+}
+
+-- Montagem ----------------------------------------------------------------------
+local function getValue(item)
+    local key = item.check or item.slider or item.combo
+    if item.get then return item.get() end
+    if item.custom then return getCustom(key) end
+    return opt(key)
+end
+
+local function setValue(item, value)
+    local key = item.check or item.slider or item.combo
+    if item.set then return item.set(value) end
+    if item.custom then return setCustom(key, value) end
+    setOpt(key, value)
+    if item.also then setOpt(item.also, value) end
+end
+
+local function buildPanel(tab)
+    local panel = g_ui.createWidget('Panel')
+    panel:setId(tab.name:lower() .. 'Panel')
+    local first = true
+    for _, item in ipairs(tab.items) do
+        local widget
+        if item.check then
+            widget = g_ui.createWidget('Options74CheckBox', panel)
+            widget:setText(tr(item.text))
+            widget:setChecked(getValue(item) and true or false)
+            widget.onCheckChange = function(self, checked) setValue(item, checked) end
+            widgetsByKey[item.check] = { widget = widget, item = item }
+        elseif item.slider then
+            local label = g_ui.createWidget('Options74Label', panel)
+            if first then label:addAnchor(AnchorTop, 'parent', AnchorTop); label:setMarginTop(0) end
+            local bar = g_ui.createWidget('Options74ScrollBar', panel)
+            bar:setMinimum(item.min)
+            bar:setMaximum(item.max)
+            local function updateText(value)
+                local shown = item.format and item.format(value) or value
+                label:setText(tr(item.text, shown))
+            end
+            local value = tonumber(getValue(item)) or item.min
+            bar:setValue(value)
+            updateText(value)
+            bar.onValueChange = function(self, v)
+                updateText(v)
+                setValue(item, v)
+            end
+            widget = bar
+            widgetsByKey[item.slider] = { widget = bar, item = item, label = label, updateText = updateText }
+        elseif item.combo then
+            local label = g_ui.createWidget('Options74Label', panel)
+            label:setText(tr(item.text))
+            local combo = g_ui.createWidget('Options74ComboBox', panel)
+            for i, o in ipairs(item.options) do combo:addOption(tr(o.text), o.value or i) end
+            -- setCurrentIndex dispara onOptionChange; ao só mostrar o valor salvo
+            -- não pode regravar a opção (ex.: voltaria a coluna dos containers)
+            local refreshing = false
+            local function selectValue(value)
+                refreshing = true
+                local index = 1
+                for i, o in ipairs(item.options) do
+                    if (o.value or i) == value then index = i; break end
+                end
+                combo:setCurrentIndex(index)
+                refreshing = false
+            end
+            selectValue(tonumber(getValue(item)))
+            combo:setTextAlign(AlignLeft)
+            combo.onOptionChange = function(self, text, data)
+                if not refreshing then setValue(item, data) end
+            end
+            widget = combo
+            widgetsByKey[item.combo] = { widget = combo, item = item, selectValue = selectValue }
+        elseif item.button then
+            widget = g_ui.createWidget('Options74Button', panel)
+            widget:setText(tr(item.button))
+            widget.onClick = item.action
+            if first then widget:addAnchor(AnchorTop, 'parent', AnchorTop); widget:setMarginTop(0) end
+        elseif item.separator then
+            widget = g_ui.createWidget('Options74Separator', panel)
+        elseif item.label then
+            widget = g_ui.createWidget('Options74Label', panel)
+            widget:setTextWrap(false)
+            widget:setTextAutoResize(true)
+            local text = type(item.label) == 'function' and item.label() or tr(item.label)
+            widget:setText(text)
+            if item.id then widget:setId(item.id) end
+            if first then widget:addAnchor(AnchorTop, 'parent', AnchorTop); widget:setMarginTop(0) else widget:setMarginTop(6) end
+        end
+        first = false
+    end
+    return panel
+end
+
+function refreshValues()
+    for key, entry in pairs(widgetsByKey) do
+        local value = getValue(entry.item)
+        if entry.item.check then
+            entry.widget:setChecked(value and true or false)
+        elseif entry.item.slider then
+            value = tonumber(value) or entry.item.min
+            entry.widget:setValue(value)
+            entry.updateText(value)
+        elseif entry.item.combo and entry.selectValue then
+            entry.selectValue(tonumber(value))
+        end
+    end
+end
+
+-- Mostrar/esconder ----------------------------------------------------------------
+function show()
+    if not window then return end
+    refreshValues()
+    window:show()
+    window:raise()
+    window:focus()
+end
+
+function hide()
+    if not window then return end
+    g_settings.save()
+    window:hide()
+end
+
+function toggle()
+    if window and window:isVisible() then hide() else show() end
+end
+
+-- O botão de opções do topo e quem chama modules.client_options.toggle/show
+-- passam a abrir esta janela.
+local originals
+
+local function takeOverClientOptions()
+    local co = modules.client_options
+    if not co then return end
+    originals = originals or { toggle = co.toggle, show = co.show, hide = co.hide }
+    co.toggle = toggle
+    co.show = show
+    co.hide = hide
+    local topMenu = modules.client_topmenu and modules.client_topmenu.getTopMenu and modules.client_topmenu.getTopMenu()
+    local button = topMenu and topMenu:recursiveGetChildById('optionsButton')
+    if button then
+        button.onMouseRelease = function(widget, mousePos, mouseButton)
+            if widget:containsPoint(mousePos) and mouseButton == MouseLeftButton then
+                toggle()
+                return true
+            end
+        end
+    end
+end
+
+-- Screenshots ------------------------------------------------------------------
+-- Cada opcao funciona sozinha (nao tem mais a chave geral "Auto screenshots").
+-- O 7.4 nao tem os eventos do servidor: vem das mensagens (level, magic level,
+-- skills) e do "You are dead." (o protocolo 7.4 nao tem o pacote de morte).
+function takeScreenshot(reason, now)
+    if not g_game.isOnline() then return end
+    local player = g_game.getLocalPlayer()
+    local name = player and player:getName() or 'player'
+    name = name:gsub('[^%w%-_ ]', '')
+    local fileName = string.format('%s_%s_%s.png', name, reason or 'manual', os.date('%Y-%m-%d_%H-%M-%S'))
+    local function shoot()
+        if g_app.doScreenshotTo and g_app.getScreenshotsDir then
+            local dir = g_app.getScreenshotsDir()
+            local sep = dir:find('\\', 1, true) and '\\' or '/'
+            g_app.doScreenshotTo(dir .. sep .. fileName)
+        else
+            if not g_resources.directoryExists('/' .. screenshotsDir) then g_resources.makeDir(screenshotsDir) end
+            g_app.doScreenshot('/' .. screenshotsDir .. '/' .. fileName)
+        end
+        if modules.game_textmessage and modules.game_textmessage.displayStatusMessage then
+            modules.game_textmessage.displayStatusMessage(tr('Screenshot saved: %s', fileName))
+        end
+    end
+    -- morte: na hora, antes da janela de morte aparecer por cima
+    if now then shoot() else scheduleEvent(shoot, 100) end
+end
+
+local function onTextMessage(mode, text)
+    if type(text) ~= 'string' then return end
+    if text:find('^You are dead%.') then
+        if getCustom('screenshotOnDeath') then takeScreenshot('death', true) end
+    elseif text:find('^You advanced from Level') then
+        if getCustom('screenshotOnLevelUp') then takeScreenshot('level') end
+    elseif text:find('^You advanced to magic level') then
+        if getCustom('screenshotOnMagicLevel') then takeScreenshot('magiclevel') end
+    elseif text:find('^You advanced in ') then
+        if getCustom('screenshotOnSkill') then takeScreenshot('skill') end
+    end
+end
+
+local function onGameStart()
+    customActions.walkFirstStepDelay(getCustom('walkFirstStepDelay'))
+end
+
+function init()
+    window = g_ui.displayUI('options74')
+    window:hide()
+    tabBar = window:getChildById('optionsTabBar')
+    tabBar:setContentWidget(window:getChildById('optionsTabContent'))
+    local tabScroll = tabBar:getChildById('scrollBar')
+    if tabScroll then tabScroll:setWidth(0); tabScroll:hide() end
+    for _, tab in ipairs(tabs) do
+        local panel = buildPanel(tab)
+        panels[tab.name] = panel
+        local button = tabBar:addTab(tr(tab.name), panel, tab.icon)
+        if button then
+            button:setHeight(47)
+            button:setMarginTop(#tabBar:getTabs() == 1 and 0 or 10)
+        end
+    end
+    scheduleEvent(takeOverClientOptions, 300)
+    initFeatures()
+    applyOptimizationLevel()
+    connect(g_game, { onTextMessage = onTextMessage, onGameStart = onGameStart })
+    Keybind.new('Misc.', 'Take Screenshot', 'Ctrl+Shift+S', '')
+    Keybind.bind('Misc.', 'Take Screenshot', {
+        { type = KEY_DOWN, callback = function() takeScreenshot('manual') end }
+    })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    terminateFeatures()
+    disconnect(g_game, { onTextMessage = onTextMessage, onGameStart = onGameStart })
+    Keybind.delete('Misc.', 'Take Screenshot')
+    local co = modules.client_options
+    if co and originals then
+        co.toggle, co.show, co.hide = originals.toggle, originals.show, originals.hide
+        originals = nil
+    end
+    if window then window:destroy(); window = nil end
+end

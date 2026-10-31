@@ -1,0 +1,150 @@
+-- Cam ao vivo (OTServ 7.4 / Tibian Legacy), como o "Watch Cams" do Miracle.
+--
+-- * Jogador: com Options > Game > "Allow others to watch me (live cam)" ligado,
+--   o cliente avisa o servidor (comando 0xE3) ao entrar no jogo e quando a
+--   opção muda. Ver src/game/cam_live.hh do servidor.
+-- * Espectador: entrou pelo "Watch Cams" da tela de login (G.watchingCam). O
+--   servidor manda a tela do jogador e tudo o que ele vê, e ignora o que este
+--   cliente envia; aqui as ações ficam bloqueadas para o cliente não andar ou
+--   agir sozinho, e o botão de sair encerra na hora.
+
+local OPCODE = 0xE3
+
+local banner
+local spectating = false
+local originals = {}
+local lastWarning = 0
+
+-- funções de g_game que agem no jogo (as que não existirem nesta versão são ignoradas)
+local blockedGame = {
+    'walk', 'autoWalk', 'forceWalk', 'turn', 'stop', 'attack', 'follow', 'cancelAttack', 'cancelFollow',
+    'cancelAttackAndFollow', 'use', 'useWith', 'useInventoryItem', 'useInventoryItemWith', 'move',
+    'moveToParentContainer', 'rotate', 'open', 'openParent', 'refreshContainer', 'look', 'talk',
+    'talkChannel', 'talkPrivate', 'requestChannels', 'joinChannel', 'leaveChannel', 'openPrivateChannel',
+    'openOwnChannel', 'inviteToOwnChannel', 'excludeFromOwnChannel', 'requestOutfit', 'changeOutfit',
+    'addVip', 'removeVip', 'editVip', 'partyInvite', 'partyJoin', 'partyRevokeInvitation',
+    'partyPassLeadership', 'partyLeave', 'partyShareExperience', 'requestTrade', 'inspectTrade',
+    'acceptTrade', 'rejectTrade', 'editText', 'editList', 'buyItem', 'sellItem', 'closeNpcTrade',
+    'reportBug', 'reportRuleViolation',
+}
+
+local function warn()
+    local now = g_clock.millis()
+    if now - lastWarning < 3000 then return end
+    lastWarning = now
+    if modules.game_textmessage and modules.game_textmessage.displayFailureMessage then
+        modules.game_textmessage.displayFailureMessage(tr('You are watching a live cam.'))
+    end
+end
+
+local function blocked()
+    warn()
+    return false
+end
+
+local function hook(target, name, replacement)
+    if type(target[name]) ~= 'function' then return end
+    table.insert(originals, { target = target, name = name, fn = target[name] })
+    target[name] = replacement
+end
+
+local function unhookAll()
+    for i = #originals, 1, -1 do
+        local entry = originals[i]
+        entry.target[entry.name] = entry.fn
+    end
+    originals = {}
+end
+
+local function createBanner()
+    if banner then banner:destroy(); banner = nil end
+    local mapPanel = modules.game_interface and modules.game_interface.getMapPanel and modules.game_interface.getMapPanel()
+    if not mapPanel then return end
+    banner = g_ui.createWidget('Label', mapPanel)
+    banner:setId('liveCamBanner')
+    banner:setFont('verdana-11px-rounded')
+    banner:setColor('#ffffff')
+    banner:setBackgroundColor('#000000a0')
+    banner:setTextAlign(AlignCenter)
+    banner:setPhantom(true)
+    banner:addAnchor(AnchorTop, 'parent', AnchorTop)
+    banner:addAnchor(AnchorHorizontalCenter, 'parent', AnchorHorizontalCenter)
+    banner:setMarginTop(4)
+    local name = (g_game.getCharacterName() or ''):gsub('[{},]', '')
+    banner:setColoredText(string.format('{LIVE, #ff4040}{   %s, #ffffff}', tr('Watching %s', name)))
+    banner:setHeight(18)
+    banner:setWidth(banner:getTextSize().width + 20)
+end
+
+local function startSpectating()
+    if spectating then return end
+    spectating = true
+    lastWarning = g_clock.millis() -- sem aviso pelo que a interface faz ao abrir
+    for _, name in ipairs(blockedGame) do
+        hook(g_game, name, blocked)
+    end
+    -- clique no mapa (andar até o ponto)
+    if LocalPlayer then
+        hook(LocalPlayer, 'autoWalk', blocked)
+    end
+    -- sair não espera fim de luta: o espectador não está no jogo
+    if type(g_game.forceLogout) == 'function' then
+        local forceLogout = g_game.forceLogout
+        hook(g_game, 'safeLogout', function() forceLogout() end)
+        hook(g_game, 'logout', function() forceLogout() end)
+    end
+    createBanner()
+end
+
+local function stopSpectating()
+    if not spectating then return end
+    spectating = false
+    unhookAll()
+    if banner then banner:destroy(); banner = nil end
+end
+
+function isSpectating()
+    return spectating
+end
+
+local function enabledByOption()
+    local options = modules.client_options74
+    if options and options.getCustom then
+        return options.getCustom('liveCam') == true
+    end
+    return false
+end
+
+-- manda ao servidor se a cam do jogador está ligada
+function sendSetting()
+    if spectating or G.watchingCam or not g_game.isOnline() then return end
+    local protocol = g_game.getProtocolGame()
+    if not protocol then return end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(enabledByOption() and 1 or 0)
+    protocol:send(msg)
+end
+
+local function onGameStart()
+    if G.watchingCam then
+        startSpectating()
+    elseif enabledByOption() then
+        -- só depois que o login terminou de chegar
+        scheduleEvent(sendSetting, 500)
+    end
+end
+
+local function onGameEnd()
+    stopSpectating()
+end
+
+function init()
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    stopSpectating()
+end

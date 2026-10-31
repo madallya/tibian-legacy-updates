@@ -1,0 +1,10 @@
+Module
+  name: game_highscore74
+  description: Highscore no estilo do cliente do Miracle (ranking pedido ao servidor, comando 0xE2)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ highscore74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

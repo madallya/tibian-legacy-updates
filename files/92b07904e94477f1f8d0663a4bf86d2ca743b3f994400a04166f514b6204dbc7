@@ -1,0 +1,24 @@
+// Exp Statistics (coluna)
+Hunt74StatMiniWindow
+  id: hunt74ExpWindow
+  height: 90
+  @onOpen: modules.game_hunt74.onStatsOpen('exp')
+  @onClose: modules.game_hunt74.onStatsClose('exp')
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    padding-bottom: 4
+    layout:
+      type: verticalBox
+    Hunt74StatRow
+      id: expHour
+    Hunt74StatRow
+      id: expGained
+    Hunt74StatRow
+      id: expToLevel
+    Hunt74StatRow
+      id: timeToLevel
+
+  MiniWindowCorner74

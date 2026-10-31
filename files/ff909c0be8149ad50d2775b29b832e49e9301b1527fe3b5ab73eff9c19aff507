@@ -1,0 +1,13 @@
+// OTServ 7.4: brilho pulsando no corpo recém-criado (Show brand-new corpse shader)
+uniform float u_Time;
+uniform sampler2D u_Tex0;
+varying vec2 v_TexCoord;
+
+void main()
+{
+    vec4 col = texture2D(u_Tex0, v_TexCoord);
+    float pulse = (sin(u_Time * 4.0) + 1.0) * 0.5;
+    vec3 bright = min(col.rgb * 1.35 + vec3(0.10, 0.10, 0.06), vec3(1.0));
+    col.rgb = mix(col.rgb, bright, 0.35 + 0.45 * pulse);
+    gl_FragColor = col;
+}

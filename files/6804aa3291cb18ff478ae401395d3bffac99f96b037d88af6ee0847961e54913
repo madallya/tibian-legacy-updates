@@ -1,0 +1,18 @@
+-- OTServ 7.4: textos com o nome usado no cliente 7.4
+locale = {
+  name = "en",
+  charset = "cp1252",
+  languageName = "English",
+
+  formatNumbers = true,
+  decimalSeperator = '.',
+  thousandsSeperator = ',',
+
+  translation = {
+    ["Local Chat"] = "Default",
+    ["Acc Name:"] = "Account:",
+    ["Account number:"] = "Account:",
+  }
+}
+
+modules.client_locales.installLocale(locale)

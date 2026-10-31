@@ -1,0 +1,7 @@
+Font
+  name: tibia-outlined
+  texture: tibia-outlined
+  height: 14
+  glyph-size: 16 16
+  spacing: -1 0
+  space-width: 4

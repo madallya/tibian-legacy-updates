@@ -1,0 +1,278 @@
+-- Moldura dos itens com atributos (OTServ 7.4 / Telmora), como no cliente do Miracle.
+--
+-- O protocolo 7.4 não diz que um item tem atributos, e o cliente só conhece o
+-- item pela posição (slot do inventário ou container + índice). Logo depois do
+-- pacote que manda um item com atributos, o servidor manda o comando 0xEB com a
+-- posição e a quantidade de atributos (src/game/atributos.hh):
+--   1 inventário  S->C: u8 slot, u8 atributos (1..5)
+--   2 container   S->C: u8 container, u8 quantidade, (u8 índice, u8 atributos)...
+-- A quantidade fica no próprio item (item.attrCount) e a moldura é desenhada por
+-- ItemsDatabase.setAttrFrame (modules/gamelib/items.lua), chamada pelos módulos
+-- de inventário e containers ao mostrar cada item.
+--
+-- O servidor só manda o 0xEB depois que o cliente pede (C->S sub 1, versão);
+-- um cliente antigo, que não conhece o comando, nunca recebe.
+--
+-- Combat Stats (como no Miracle): o botão da barra das Skills ("Show Stats" /
+-- "Hide Stats") abre a janela com Attack, Armor, Defense e o que os atributos
+-- equipados dão, cada atributo num grupo separado pela linha. O servidor manda
+-- as linhas prontas no pedido e sempre que mudam (sub 4: u8 linhas, e para cada
+-- uma u8 tipo 0 valor / 1 título / 2 sub-linha / 3 separador; tipo 0-2: string
+-- nome; tipo 0 e 2: string valor, u8 ícone do elemento). O sub 3 (só nome e
+-- valor, nome vazio = separador) continua sendo lido.
+
+local OPCODE = 0xEB
+local VERSION = 1
+
+local statsWindow
+local statsButton
+local statsRows      -- última lista do servidor { {kind, name, value, icon}, ... }
+local KIND_ROW, KIND_TITLE, KIND_SUB, KIND_SEPARATOR = 0, 1, 2, 3
+-- ícones dos elementos (os mesmos do bestiário)
+local ICONS = {
+    [1] = '/game_cyclopedia74/images/icons/monster-icon-physical-resist',
+    [2] = '/game_cyclopedia74/images/icons/monster-icon-fire-resist',
+    [3] = '/game_cyclopedia74/images/icons/monster-icon-energy-resist',
+    [4] = '/game_cyclopedia74/images/icons/monster-icon-earth-resist',
+    [5] = '/game_cyclopedia74/images/icons/monster-icon-ice-resist',
+    [6] = '/game_cyclopedia74/images/icons/monster-icon-death-resist',
+}
+local MAX_ROWS = 60
+
+local function isSpectating()
+    local livecam = modules.game_livecam74
+    if livecam and livecam.isSpectating and livecam.isSpectating() then return true end
+    local classic = modules.client_classic74
+    return classic and classic.isPlayingCam and classic.isPlayingCam() or false
+end
+
+local function sendHello()
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() or isSpectating() then return end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(1)
+    msg:addU8(VERSION)
+    protocol:send(msg)
+end
+
+local function refreshInventory()
+    local inventory = modules.game_inventory
+    if inventory and inventory.reloadInventory then
+        inventory.reloadInventory()
+    end
+end
+
+local function refreshContainer(container)
+    local panel = container and container.itemsPanel
+    if not panel then return end
+    for _, widget in ipairs(panel:getChildren()) do
+        if widget.getItem then
+            ItemsDatabase.setAttrFrame(widget, widget:getItem())
+        end
+    end
+end
+
+local function applyInventory(slot, count)
+    local player = g_game.getLocalPlayer()
+    local item = player and player:getInventoryItem(slot)
+    if not item then return end
+    item.attrCount = count
+    refreshInventory()
+end
+
+local function applyContainer(containerId, list)
+    local container = g_game.getContainer(containerId)
+    if not container then return end
+    for _, e in ipairs(list) do
+        local item = container:getItem(e.index)
+        if item then item.attrCount = e.count end
+    end
+    refreshContainer(container)
+end
+
+-- Combat Stats ------------------------------------------------------------------
+local function statsContents()
+    return statsWindow and statsWindow:getChildById('contentsPanel')
+end
+
+local function refreshStats()
+    local panel = statsContents()
+    if not panel then return end
+    panel:destroyChildren()
+    local rows = statsRows or {
+        { kind = KIND_ROW, name = tr('Attack'), value = '-' },
+        { kind = KIND_ROW, name = tr('Armor'), value = '-' },
+        { kind = KIND_ROW, name = tr('Defense'), value = '-' },
+    }
+    for _, r in ipairs(rows) do
+        if r.kind == KIND_SEPARATOR then
+            g_ui.createWidget('CombatStats74Separator', panel)
+        else
+            local row = g_ui.createWidget('CombatStats74Row', panel)
+            local label = row:getChildById('label')
+            label:setText(r.name)
+            if r.kind == KIND_SUB then label:setMarginLeft(8) end
+            row:getChildById('value'):setText(r.value or '')
+            local icon = ICONS[r.icon or 0]
+            if icon then
+                local w = row:getChildById('icon')
+                w:setImageSource(icon)
+                w:setVisible(true)
+                row:getChildById('value'):setMarginRight(12)
+            end
+        end
+    end
+end
+
+local function isStatsOpen()
+    return statsWindow ~= nil and statsWindow:isVisible() and statsWindow:getParent() ~= nil
+end
+
+local function updateStatsButton()
+    if statsButton and not statsButton:isDestroyed() then
+        statsButton:setTooltip(isStatsOpen() and tr('Hide Stats') or tr('Show Stats'))
+    end
+end
+
+function toggleStats()
+    if not statsWindow then return end
+    if isStatsOpen() then
+        statsWindow:close()
+    else
+        if not statsWindow:getParent() then
+            local panel = modules.game_interface.findContentPanelAvailable(statsWindow, statsWindow:getMinimumHeight())
+            if not panel then return end
+            panel:addChild(statsWindow)
+        end
+        statsWindow:open()
+    end
+    updateStatsButton()
+end
+
+function onStatsOpen()
+    refreshStats()
+    updateStatsButton()
+end
+
+function onStatsClose()
+    updateStatsButton()
+end
+
+-- chamado pelo módulo de Skills: o botão da barra (o mesmo desenho de lista do
+-- Miracle) abre e fecha a janela
+function bindStatsButton(button)
+    statsButton = button
+    if not button then return end
+    button.onClick = function() toggleStats(); return true end
+    updateStatsButton()
+end
+
+-- sub 3 (antigo): nome e valor; nome vazio = separador
+local function readStatsV1(msg)
+    local n = msg:getU8()
+    local rows = {}
+    for i = 1, n do
+        local name, value = msg:getString(), msg:getString()
+        rows[i] = { kind = name == '' and KIND_SEPARATOR or KIND_ROW, name = name, value = value }
+    end
+    return rows
+end
+
+-- sub 4: tipo, nome, valor e ícone
+local function readStats(msg)
+    local n = msg:getU8()
+    local rows = {}
+    for i = 1, n do
+        local r = { kind = msg:getU8() }
+        if r.kind ~= KIND_SEPARATOR then
+            r.name = msg:getString()
+            if r.kind ~= KIND_TITLE then
+                r.value = msg:getString()
+                r.icon = msg:getU8()
+            end
+        end
+        rows[i] = r
+    end
+    return rows
+end
+
+local function applyStats(rows)
+    if #rows > MAX_ROWS then
+        for i = #rows, MAX_ROWS + 1, -1 do rows[i] = nil end
+    end
+    statsRows = rows
+    if isStatsOpen() then refreshStats() end
+end
+
+-- lê tudo antes de aplicar: um erro ao aplicar nunca desalinha a mensagem
+local function onFrames(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        local slot, count = msg:getU8(), msg:getU8()
+        local ok, err = pcall(applyInventory, slot, count)
+        if not ok then g_logger.warning('atributos74: ' .. tostring(err)) end
+    elseif sub == 2 then
+        local containerId, n = msg:getU8(), msg:getU8()
+        local list = {}
+        for i = 1, n do
+            list[i] = { index = msg:getU8(), count = msg:getU8() }
+        end
+        local ok, err = pcall(applyContainer, containerId, list)
+        if not ok then g_logger.warning('atributos74: ' .. tostring(err)) end
+    elseif sub == 3 or sub == 4 then
+        local rows = sub == 3 and readStatsV1(msg) or readStats(msg)
+        local ok, err = pcall(applyStats, rows)
+        if not ok then g_logger.warning('atributos74: ' .. tostring(err)) end
+    else
+        -- subcomando de uma versão mais nova do servidor: não dá para saber o
+        -- tamanho; o servidor só manda o que a VERSION pedida conhece
+        g_logger.warning('atributos74: subcomando desconhecido ' .. tostring(sub))
+    end
+end
+
+local function onGameStart()
+    statsRows = nil
+    if statsWindow then
+        statsWindow:setupOnStart()
+        refreshStats()
+        statsWindow:scheduleFitToContents()
+    end
+    updateStatsButton()
+    sendHello()
+end
+
+local function onGameEnd()
+    statsRows = nil
+end
+
+function init()
+    statsWindow = g_ui.loadUI('combatstats74')
+    if statsWindow then
+        statsWindow:setup()
+        statsWindow:keepBasicButtons()
+        statsWindow:setContentMinimumHeight(20)
+        statsWindow:close(true)
+        statsWindow:enableFitToContents(true) -- do tamanho das linhas, sem rolagem
+        refreshStats()
+    end
+    ProtocolGame.registerOpcode(OPCODE, onFrames)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    -- módulo recarregado com o jogo aberto: o botão das Skills ainda aponta
+    -- para o módulo antigo; liga de novo (o servidor manda tudo de novo no hello)
+    local skills = modules.game_skills
+    local win = skills and skills.skillsWindow
+    if win and not win:isDestroyed() then
+        local button = win:recursiveGetChildById('contextMenuButton')
+        if button and button:isVisible() then bindStatsButton(button) end
+    end
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if statsButton and not statsButton:isDestroyed() then statsButton.onClick = nil end
+    statsButton = nil
+    if statsWindow then statsWindow:destroy(); statsWindow = nil end
+end

@@ -1,0 +1,176 @@
+// OTServ 7.4: janela "Change player in VIP list" igual à do Miracle (tipo,
+// descrição de até 20 letras, aviso ao entrar). O 7.4 não guarda isso no
+// servidor: fica no cliente (VipInfo nas configurações).
+VipGroupBox < CheckBox
+  !text: tr('Empty')
+  color: #f4ecec
+  text-offset: 15 -1
+  $hover !disabled:
+    color: #9a9999
+
+IconButton < CheckBox
+  size: 18 18
+  image-source: /images/game/viplist/vipcheckbox
+  image-rect: 0 0 18 18
+  image-border: 3
+  icon-source: /images/game/viplist/icons
+  icon-size: 12 12
+  icon-rect: 0 0 12 12
+  icon-clip: 0 0 12 12
+  icon-offset: 3 3
+  margin-left: 6
+
+  $first:
+    margin-left: 0
+
+  $!checked:
+    image-clip: 26 0 26 26
+
+  $hover !checked:
+    image-clip: 78 0 26 26
+
+  $checked:
+    image-clip: 0 0 26 26
+
+  $hover checked:
+    image-clip: 52 0 26 26
+
+MainWindow
+  size: 276 259
+  !text: tr('Change player in VIP list')
+
+  Label
+    id: nameLabel
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 1
+    color: #dfdfdf
+    text-wrap: false
+
+  HorizontalSeparator
+    id: nameSeparator
+    anchors.top: nameLabel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 5
+
+  Label
+    id: typeLabel
+    !text: tr('Select a type:')
+    anchors.top: nameSeparator.bottom
+    anchors.left: parent.left
+    margin-top: 15
+    color: #c0c0c0
+    text-auto-resize: true
+
+  UIWidget
+    id: icons
+    layout: horizontalBox
+    anchors.top: typeLabel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 6
+    height: 18
+
+    IconButton
+      id: icon0
+
+    IconButton
+      id: icon1
+      icon-clip: 12 0 12 12
+
+    IconButton
+      id: icon2
+      icon-clip: 24 0 12 12
+
+    IconButton
+      id: icon3
+      icon-clip: 36 0 12 12
+
+    IconButton
+      id: icon4
+      icon-clip: 48 0 12 12
+
+    IconButton
+      id: icon5
+      icon-clip: 60 0 12 12
+
+    IconButton
+      id: icon6
+      icon-clip: 72 0 12 12
+
+    IconButton
+      id: icon7
+      icon-clip: 84 0 12 12
+
+    IconButton
+      id: icon8
+      icon-clip: 96 0 12 12
+
+    IconButton
+      id: icon9
+      icon-clip: 108 0 12 12
+
+  Label
+    id: descriptionLabel
+    !text: tr('Enter a short description:')
+    anchors.top: icons.bottom
+    anchors.left: parent.left
+    margin-top: 12
+    color: #c0c0c0
+    text-auto-resize: true
+
+  MultilineTextEdit
+    id: descriptionText
+    anchors.top: descriptionLabel.bottom
+    anchors.left: parent.left
+    anchors.right: descriptionScroll.left
+    margin-top: 4
+    height: 39
+    max-length: 20
+    text-wrap: true
+    vertical-scrollbar: descriptionScroll
+
+  VerticalScrollBar
+    id: descriptionScroll
+    anchors.top: descriptionLabel.bottom
+    anchors.right: parent.right
+    margin-top: 4
+    height: 39
+    step: 14
+    pixels-scroll: true
+
+  CheckBox
+    id: checkBoxNotify
+    !text: tr('Notify at login')
+    anchors.top: descriptionText.bottom
+    anchors.left: parent.left
+    margin-top: 12
+    width: 150
+
+  // grupos de VIP não existem no 7.4 (o lua ainda limpa este painel)
+  UIWidget
+    id: groups
+    visible: false
+
+  HorizontalSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: buttonCancel.top
+    margin-bottom: 10
+
+  Button
+    id: buttonOK
+    !text: tr('Ok')
+    width: 64
+    anchors.right: buttonCancel.left
+    anchors.bottom: parent.bottom
+    margin-right: 10
+
+  Button
+    id: buttonCancel
+    !text: tr('Cancel')
+    width: 64
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom

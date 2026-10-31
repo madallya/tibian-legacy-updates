@@ -1,0 +1,67 @@
+// Janela "Local Cams": gravações (.cam) da pasta records\ do cliente.
+CamListLabel < Label
+  height: 16
+  text-offset: 3 1
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #ffffff30
+    color: #ffffff
+
+MainWindow
+  id: camWindow74
+  !text: tr('Local Cams')
+  size: 316 300
+  @onEscape: modules.client_classic74.closeCams()
+  @onEnter: modules.client_classic74.playSelectedCam()
+
+  TextList
+    id: camList
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: separator.top
+    margin-bottom: 8
+    padding: 1
+    focusable: false
+    vertical-scrollbar: camListScroll
+
+  VerticalScrollBar
+    id: camListScroll
+    anchors.top: camList.top
+    anchors.bottom: camList.bottom
+    anchors.right: camList.right
+    step: 14
+    pixels-scroll: true
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: playButton.top
+    margin-bottom: 8
+
+  Button
+    id: folderButton
+    !text: tr('Cams Folder')
+    width: 86
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    @onClick: modules.client_classic74.openCamsFolder()
+
+  Button
+    id: playButton
+    !text: tr('Play')
+    width: 64
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    @onClick: modules.client_classic74.playSelectedCam()
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    width: 64
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    @onClick: modules.client_classic74.closeCams()

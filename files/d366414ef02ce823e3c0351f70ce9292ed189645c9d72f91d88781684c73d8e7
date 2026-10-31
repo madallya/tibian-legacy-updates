@@ -1,0 +1,99 @@
+-- Ping e Food (OTServ 7.4 / Tibian Legacy).
+--
+-- O protocolo 7.4 nao tem ping de ida e volta. A cada segundo o cliente manda
+-- 0xE9 com um numero e o servidor devolve o mesmo numero mais os segundos de
+-- comida que restam (SKILL_FED). O tempo da volta e o ping mostrado abaixo do
+-- FPS; a comida vai para a linha "Food" da janela de Skills.
+
+local OPCODE = 0xE9
+local INTERVAL = 1000
+
+local echoEvent = nil
+local sent = {}          -- numero -> g_clock.millis() do envio
+local nextToken = 1
+local foodSeconds = nil  -- ultimo valor do servidor
+local foodAt = 0         -- g_clock.millis() em que chegou
+
+local function watchingCam()
+    local livecam = modules.game_livecam74
+    if livecam and livecam.isSpectating and livecam.isSpectating() then return true end
+    local classic = modules.client_classic74
+    return classic and classic.isPlayingCam and classic.isPlayingCam() or false
+end
+
+-- segundos de comida agora (o servidor conta 1 por segundo)
+function getFoodSeconds()
+    if not foodSeconds then return nil end
+    return math.max(0, foodSeconds - math.floor((g_clock.millis() - foodAt) / 1000))
+end
+
+local function showFood()
+    local food = getFoodSeconds()
+    local skills = modules.game_skills
+    if food and skills and skills.setFoodTime74 then
+        skills.setFoodTime74(food)
+    end
+end
+
+local function sendEcho()
+    echoEvent = nil
+    if not g_game.isOnline() then return end
+    echoEvent = scheduleEvent(sendEcho, INTERVAL)
+    showFood()
+    if watchingCam() then return end
+    local protocol = g_game.getProtocolGame()
+    if not protocol then return end
+
+    local token = nextToken
+    nextToken = nextToken % 0x7FFFFFFF + 1
+    local now = g_clock.millis()
+    sent[token] = now
+    -- respostas que nunca vieram (servidor antigo) nao ficam acumulando
+    for t, at in pairs(sent) do
+        if now - at > 30000 then sent[t] = nil end
+    end
+
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU32(token)
+    protocol:send(msg)
+end
+
+local function onStatusEcho(protocol, msg)
+    local token = msg:getU32()
+    local food = msg:getU32()
+    foodSeconds = food
+    foodAt = g_clock.millis()
+    showFood()
+
+    local at = sent[token]
+    if at then
+        sent[token] = nil
+        signalcall(g_game.onPingBack, g_clock.millis() - at)
+    end
+end
+
+local function onGameStart()
+    sent = {}
+    foodSeconds = nil
+    if echoEvent then removeEvent(echoEvent) end
+    echoEvent = scheduleEvent(sendEcho, 500)
+end
+
+local function onGameEnd()
+    if echoEvent then removeEvent(echoEvent); echoEvent = nil end
+    sent = {}
+    foodSeconds = nil
+end
+
+function init()
+    ProtocolGame.registerOpcode(OPCODE, onStatusEcho)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    onGameEnd()
+end
