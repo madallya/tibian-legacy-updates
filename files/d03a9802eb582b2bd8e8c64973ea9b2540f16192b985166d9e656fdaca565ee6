@@ -1,0 +1,27 @@
+// Kills Statistics (coluna)
+Hunt74StatMiniWindow
+  id: hunt74KillsWindow
+  height: 180
+  @onOpen: modules.game_hunt74.onStatsOpen('kills')
+  @onClose: modules.game_hunt74.onStatsClose('kills')
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    padding-bottom: 7
+    layout:
+      type: verticalBox
+    Hunt74StatRow
+      id: total
+    Hunt74Separator
+    Hunt74Caption
+      id: creaturesCaption
+    UIWidget
+      id: creatures
+      phantom: true
+      layout:
+        type: verticalBox
+        fit-children: true
+
+  MiniWindowCorner74

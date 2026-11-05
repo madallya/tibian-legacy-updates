@@ -1,0 +1,45 @@
+// Telmora: aura das elite creatures (gold, 2 estrela(s)).
+// Contorno de 2 px em volta do sprite, pulsando: o anel de dentro (1 px) com a
+// cor cheia e o de fora (2 px, inclui as diagonais) um pouco mais fraco, para
+// a borda ficar mais grossa sem parecer um bloco. Desenhado sobre o
+// framebuffer da criatura (useFramebuffer, 64x64 = 1/64 por pixel), por isso
+// pode pintar fora do sprite.
+// Base: outline.frag do OTClient e creatures/outline-*.frag do cliente PXG.
+const float px = 1.0 / 64.0;
+const vec3 auraColor = vec3(1.00, 0.85, 0.20);
+uniform float u_Time;
+uniform sampler2D u_Tex0;
+varying vec2 v_TexCoord;
+
+float alphaAt(vec2 d)
+{
+    return texture2D(u_Tex0, v_TexCoord + d * px).a;
+}
+
+void main()
+{
+    vec4 col = texture2D(u_Tex0, v_TexCoord);
+    if (col.a > 0.5) {
+        gl_FragColor = col;
+        return;
+    }
+    // anel de 1 px (vizinhos em cruz)
+    float inner = alphaAt(vec2(1.0, 0.0)) + alphaAt(vec2(-1.0, 0.0)) +
+                  alphaAt(vec2(0.0, 1.0)) + alphaAt(vec2(0.0, -1.0));
+    // anel de 2 px (cruz a 2 px e diagonais a 1 px)
+    float outer = alphaAt(vec2(2.0, 0.0)) + alphaAt(vec2(-2.0, 0.0)) +
+                  alphaAt(vec2(0.0, 2.0)) + alphaAt(vec2(0.0, -2.0)) +
+                  alphaAt(vec2(1.0, 1.0)) + alphaAt(vec2(-1.0, 1.0)) +
+                  alphaAt(vec2(1.0, -1.0)) + alphaAt(vec2(-1.0, -1.0));
+    // pulso: 0.45 .. 1.0 de intensidade, ~1,5 vezes por segundo
+    float pulse = (sin(u_Time * 9.0) + 1.0) * 0.5;
+    float strength = 0.45 + 0.55 * pulse;
+    if (inner > 0.0) {
+        gl_FragColor = vec4(auraColor * strength, strength);
+    } else if (outer > 0.0) {
+        float s = strength * 0.6;
+        gl_FragColor = vec4(auraColor * s, s);
+    } else {
+        gl_FragColor = col;
+    }
+}

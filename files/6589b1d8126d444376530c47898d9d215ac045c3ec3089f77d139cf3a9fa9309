@@ -1,0 +1,10 @@
+Module
+  name: game_status74
+  description: Ping e tempo de comida vindos do servidor (eco 0xE9, statusecho.hh no servidor)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ status74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

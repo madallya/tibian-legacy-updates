@@ -1,0 +1,154 @@
+// Opções no estilo do cliente do Miracle: abas com ícone à esquerda e o
+// conteúdo à direita. Os valores continuam guardados pelo client_options.
+
+Options74CheckBox < CheckBox
+  anchors.left: parent.left
+  anchors.right: parent.right
+  height: 12
+  $first:
+    anchors.top: parent.top
+  $!first:
+    anchors.top: prev.bottom
+    margin-top: 7
+  text-offset: 18 -1
+
+Options74Label < Label
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.top: prev.bottom
+  margin-top: 14
+
+Options74ScrollBar < HorizontalScrollBar
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.top: prev.bottom
+  margin-top: 4
+  default-scroll: true
+
+Options74ComboBox < ComboBox
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.top: prev.bottom
+  margin-top: 4
+  height: 22
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-align: left
+  text-offset: 6 2
+  image-source: /images/ui/textedit
+  image-border: 1
+  image-clip: 0 0 0 0
+  $hover !disabled:
+    image-clip: 0 0 0 0
+  $on:
+    image-clip: 0 0 0 0
+  $checked:
+    image-clip: 0 0 0 0
+
+  UIWidget
+    size: 7 7
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 8
+    phantom: true
+    image-source: /images/ui/icon-arrow7x7-down
+
+// o UIComboBox cria o menu pelo nome do estilo + 'PopupMenu'.
+// Como no Miracle: caixa aberta mais escura, borda preta e linhas mais altas.
+Options74ComboBoxPopupMenu < ComboBoxPopupMenu
+  image-source: /images/ui/popup74
+  image-clip: 0 0 32 32
+  image-border: 2
+  padding: 2
+
+Options74ComboBoxPopupMenuButton < ComboBoxPopupMenuButton
+  height: 25
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 6 0
+  margin: 0
+
+  $hover !disabled:
+    color: #ffffff
+    background-color: #ffffff1a
+
+Options74ComboBoxPopupScrollMenu < ComboBoxPopupScrollMenu
+  image-source: /images/ui/popup74
+  image-clip: 0 0 32 32
+  image-border: 2
+  padding: 2
+
+Options74ComboBoxPopupScrollMenuButton < ComboBoxPopupScrollMenuButton
+  height: 25
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 6 0
+
+  $hover !disabled:
+    color: #ffffff
+    background-color: #ffffff1a
+
+Options74Button < Button
+  width: 150
+  anchors.left: parent.left
+  anchors.top: prev.bottom
+  margin-top: 8
+
+// faixa do minimapa por cima das duas colunas (Show left/right horizontal minimap panel)
+Classic74MinimapPanel < Panel
+  image-source: /images/ui/2pixel_up_frame_borderimage
+  image-border: 4
+  focusable: false
+  phantom: false
+
+  // puxar a borda de baixo aumenta o minimapa para baixo
+  ResizeBorder
+    id: resizeBorder
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    height: 4
+    minimum: 140
+    maximum: 700
+    margin-left: 3
+    margin-right: 3
+
+Options74Separator < HorizontalSeparator
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.top: prev.bottom
+  margin-top: 8
+
+MainWindow
+  id: optionsWindow74
+  !text: tr('Options')
+  size: 488 530
+  visible: false
+  @onEnter: modules.client_options74.hide()
+  @onEscape: modules.client_options74.hide()
+
+  TabBarVertical
+    id: optionsTabBar
+    width: 96
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    margin-left: -1
+    margin-bottom: -1
+
+  Panel
+    id: optionsTabContent
+    anchors.top: parent.top
+    anchors.left: optionsTabBar.right
+    anchors.right: parent.right
+    anchors.bottom: okButton.top
+    margin-left: 10
+    margin-top: -1
+
+  Button
+    id: okButton
+    !text: tr('Ok')
+    width: 64
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    @onClick: modules.client_options74.hide()

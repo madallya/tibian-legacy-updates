@@ -1,0 +1,10 @@
+Module
+  name: game_cam74
+  description: Cam: grava o mouse/teclado do jogador (lote 0xEC, src/client/ots74/caminput.h) e, tocando uma cam, mostra a legenda com tempo e velocidade (PgUp/PgDn) e o mouse do jogador (Insert)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ cam74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

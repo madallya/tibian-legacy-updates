@@ -1,0 +1,25 @@
+-- OTServ 7.4: textos com o nome usado no cliente 7.4
+locale = {
+  name = "en",
+  charset = "cp1252",
+  languageName = "English",
+
+  formatNumbers = true,
+  decimalSeperator = '.',
+  thousandsSeperator = ',',
+
+  translation = {
+    ["Local Chat"] = "Default",
+    ["Acc Name:"] = "Account:",
+    ["Account number:"] = "Account:",
+    -- botoes pequenos: chave propria para cada lingua poder abreviar sem
+    -- mudar o titulo das janelas (o texto em ingles continua o mesmo)
+    ["Skills (button)"] = "Skills",
+    ["Center (button)"] = "Center",
+    ["Hotkeys (button)"] = "Hotkeys",
+    ["Logout (button)"] = "Logout",
+    ["Bestiary (tab)"] = "Bestiary",
+  }
+}
+
+modules.client_locales.installLocale(locale)

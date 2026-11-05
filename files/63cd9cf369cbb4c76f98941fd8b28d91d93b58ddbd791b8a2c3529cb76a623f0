@@ -1,0 +1,317 @@
+// Highscore no estilo do cliente do Miracle: à esquerda a categoria, o primeiro
+// colocado e os filtros; à direita a tabela da página.
+
+Highscore74Box < Panel
+  image-source: /images/ui/textedit
+  image-border: 1
+  padding: 6
+
+Highscore74BoxTitle < Label
+  anchors.top: parent.top
+  anchors.left: parent.left
+  anchors.right: parent.right
+  height: 16
+  text-align: center
+  font: verdana-11px-antialised
+  color: #9d9d9d
+  background-color: #2a2a2a
+
+Highscore74VocationBox < CheckBox
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.top: prev.bottom
+  margin-top: 3
+  height: 12
+  text-offset: 16 -1
+
+Highscore74Cell < Label
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-wrap: false
+  phantom: true
+
+Highscore74Row < UIWidget
+  height: 16
+  focusable: false
+  background-color: alpha
+  $on:
+    background-color: #ffffff18
+
+  Highscore74Cell
+    id: rank
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    width: 40
+    margin-left: 4
+  Highscore74Cell
+    id: name
+    anchors.left: rank.right
+    anchors.verticalCenter: parent.verticalCenter
+    width: 146
+  Highscore74Cell
+    id: vocation
+    anchors.left: name.right
+    anchors.verticalCenter: parent.verticalCenter
+    width: 100
+    text-align: center
+  Highscore74Cell
+    id: level
+    anchors.left: vocation.right
+    anchors.verticalCenter: parent.verticalCenter
+    width: 44
+    text-align: center
+  Highscore74Cell
+    id: points
+    anchors.left: level.right
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 6
+    text-align: right
+
+MainWindow
+  id: highscore74Window
+  !text: tr('Highscore')
+  size: 640 476
+  visible: false
+  @onEscape: modules.game_highscore74.hide()
+
+  Highscore74Box
+    id: leaderboardBox
+    anchors.top: parent.top
+    anchors.left: parent.left
+    size: 170 196
+
+    Highscore74BoxTitle
+      !text: tr('Leaderboard')
+
+    ComboBox
+      id: categoryCombo
+      anchors.top: prev.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 6
+      height: 20
+
+    Creature
+      id: topCreature
+      anchors.top: prev.bottom
+      anchors.horizontalCenter: parent.horizontalCenter
+      margin-top: 8
+      size: 64 64
+      image-source: /images/ui/textedit
+      image-border: 1
+      phantom: true
+
+    Label
+      id: topRank
+      anchors.top: topCreature.top
+      anchors.right: topCreature.right
+      margin-top: 50
+      margin-right: 4
+      font: verdana-11px-antialised
+      color: #dfdfdf
+      text-auto-resize: true
+
+    Label
+      id: topName
+      anchors.top: topCreature.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+      text-align: center
+      font: verdana-11px-antialised
+      color: #dfdfdf
+
+    Label
+      id: topVocation
+      anchors.top: prev.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      text-align: center
+      font: verdana-11px-antialised
+      color: #c0c0c0
+
+    Label
+      id: topLevel
+      anchors.top: prev.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      text-align: center
+      font: verdana-11px-antialised
+      color: #c0c0c0
+
+    Label
+      id: topPoints
+      anchors.top: prev.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 3
+      height: 16
+      text-align: center
+      font: verdana-11px-antialised
+      color: #ffffff
+      background-color: #1a1a1a
+
+  Highscore74Box
+    id: filterBox
+    anchors.top: leaderboardBox.bottom
+    anchors.left: parent.left
+    anchors.bottom: closeButton.top
+    margin-top: 8
+    margin-bottom: 8
+    width: 170
+
+    Highscore74BoxTitle
+      !text: tr('Filters')
+
+    Label
+      id: vocationsLabel
+      anchors.top: prev.bottom
+      anchors.left: parent.left
+      margin-top: 6
+      !text: tr('Vocations:')
+      font: verdana-11px-antialised
+      color: #c0c0c0
+      text-auto-resize: true
+
+    Highscore74VocationBox
+      id: vocKnight
+      !text: tr('Knight')
+    Highscore74VocationBox
+      id: vocDruid
+      !text: tr('Druid')
+    Highscore74VocationBox
+      id: vocPaladin
+      !text: tr('Paladin')
+    Highscore74VocationBox
+      id: vocSorcerer
+      !text: tr('Sorcerer')
+    Highscore74VocationBox
+      id: vocNone
+      !text: tr('None')
+
+    Button
+      id: prevButton
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      size: 20 18
+      text: <
+      @onClick: modules.game_highscore74.changePage(-1)
+
+    Label
+      id: pageLabel
+      anchors.left: prevButton.right
+      anchors.right: nextButton.left
+      anchors.verticalCenter: prevButton.verticalCenter
+      text-align: center
+      font: verdana-11px-antialised
+      color: #dfdfdf
+
+    Button
+      id: nextButton
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      size: 20 18
+      text: >
+      @onClick: modules.game_highscore74.changePage(1)
+
+  Highscore74Box
+    id: tableBox
+    anchors.top: parent.top
+    anchors.left: leaderboardBox.right
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-left: 8
+    margin-bottom: 8
+    padding: 0
+
+    UIWidget
+      id: header
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      height: 18
+      background-color: #2a2a2a
+
+      Highscore74Cell
+        id: rank
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        width: 40
+        margin-left: 4
+        !text: tr('Rank')
+        color: #9d9d9d
+      Highscore74Cell
+        id: name
+        anchors.left: rank.right
+        anchors.verticalCenter: parent.verticalCenter
+        width: 146
+        !text: tr('Character')
+        color: #9d9d9d
+      Highscore74Cell
+        id: vocation
+        anchors.left: name.right
+        anchors.verticalCenter: parent.verticalCenter
+        width: 100
+        text-align: center
+        !text: tr('Vocation')
+        color: #9d9d9d
+      Highscore74Cell
+        id: level
+        anchors.left: vocation.right
+        anchors.verticalCenter: parent.verticalCenter
+        width: 44
+        text-align: center
+        !text: tr('Level')
+        color: #9d9d9d
+      Highscore74Cell
+        id: points
+        anchors.left: level.right
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        margin-right: 6
+        text-align: right
+        !text: tr('Points')
+        color: #9d9d9d
+
+    UIWidget
+      id: rows
+      anchors.top: header.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      margin-top: 2
+      layout:
+        type: verticalBox
+
+    Label
+      id: statusLabel
+      anchors.centerIn: rows
+      font: verdana-11px-antialised
+      color: #9d9d9d
+      text-auto-resize: true
+
+  Label
+    id: updatedLabel
+    anchors.left: parent.left
+    anchors.verticalCenter: closeButton.verticalCenter
+    font: verdana-11px-antialised
+    color: #9d9d9d
+    text-auto-resize: true
+
+  Button
+    id: ownRankButton
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    width: 100
+    !text: tr('Show Own Rank')
+    @onClick: modules.game_highscore74.showOwnRank()
+
+  Button
+    id: closeButton
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    width: 64
+    !text: tr('Close')
+    @onClick: modules.game_highscore74.hide()

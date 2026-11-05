@@ -1,0 +1,21 @@
+Telmora - Old School 7.4
+========================
+
+1. Abra "Telmora.exe" (o launcher). Ele baixa e confere as atualizacoes
+   sozinho e abre o jogo quando voce clicar em Jogar.
+2. Enter Game: email e senha da sua conta.
+
+Se preferir abrir o jogo direto: otclient_dx_x64.exe (DirectX, mais leve) ou
+otclient_gl_x64.exe (OpenGL). Sem o launcher, uma build antiga pode ser recusada
+no login - abra o launcher para atualizar.
+
+Nao altere nenhum arquivo desta pasta (data, modules, mods, classic74,
+init.lua, config.ini) nem os executaveis: o servidor confere a integridade do
+cliente no login e durante o jogo, e um cliente modificado e desconectado.
+O launcher repoe qualquer arquivo alterado.
+
+Cams: a copia de cada sessao fica em records\. Para assistir, use "Local Cams"
+na tela de login.
+
+Base: OTClient (opentibiabr/otclient), licenca MIT (ver LICENSE).
+Graficos e fontes do cliente Tibia 7.4.

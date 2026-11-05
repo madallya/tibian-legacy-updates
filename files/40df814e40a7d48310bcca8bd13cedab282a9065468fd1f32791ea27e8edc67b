@@ -1,0 +1,26 @@
+Panel
+  id: background
+  image-source: /images/background
+  image-smooth: false
+  image-fixed-ratio: false
+  background-color: #000000
+  anchors.top: parent.top
+  anchors.left: parent.left
+  anchors.right: parent.right
+  anchors.bottom: parent.bottom
+  margin-top: 1
+  focusable: false
+
+  UILabel
+    id: clientVersionLabel
+    visible: false
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    text-auto-resize: true
+    color: #ffffff
+
+  UIParticles
+    id: particles
+    visible: false
+    anchors.fill: parent
+    phantom: true
