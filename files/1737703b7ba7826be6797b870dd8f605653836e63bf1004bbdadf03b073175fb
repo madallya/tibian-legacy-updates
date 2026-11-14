@@ -1,0 +1,131 @@
+-- Elite creatures (Telmora). O servidor manda o estágio da elite no byte da
+-- "skull" do pacote de criatura: 11, 12 e 13 = 1, 2 e 3 estrelas (jogadores
+-- continuam com 0..4). Aqui a criatura ganha a aura (shader de contorno
+-- pulsante, uma cor por estágio) e as estrelas no lugar da skull, abaixo da
+-- barra de vida. Ver src/game/elite.hh do servidor.
+
+ELITE_MARK_BASE = 10
+ELITE_MAX_STAGE = 3
+
+local SHADER = { 'Outfit - Elite 1', 'Outfit - Elite 2', 'Outfit - Elite 3' }
+local STAR = {
+    '/game_elite74/images/star1',
+    '/game_elite74/images/star2',
+    '/game_elite74/images/star3',
+}
+local CARD_STARS = {
+    '/game_elite74/images/stars_card1',
+    '/game_elite74/images/stars_card2',
+    '/game_elite74/images/stars_card3',
+}
+local STAGE_NAME = { [0] = 'Normal', '1 Star', '2 Stars', '3 Stars' }
+-- estrelas do Miracle (recortadas das prints da ficha da Larva): 1 = 9x10,
+-- 2 lado a lado = 18x10, 3 em pirâmide = 18x18
+local STARS_SIZE = { { width = 9, height = 10 }, { width = 18, height = 10 }, { width = 18, height = 18 } }
+-- posição na ficha da Cyclopedia, medida nas prints: canto de cima/esquerda
+-- das estrelas relativo ao canto de cima/esquerda do boneco (96x96)
+local SHEET_OFFSET = { { x = 77, y = 8 }, { x = 73, y = 7 }, { x = 72, y = 3 } }
+
+local shadersReady = false
+local originalGetSkullImagePath
+local originalOnSkullChange
+
+-- Estágio (0..3) a partir do valor da skull.
+function eliteStageOfSkull(skull)
+    skull = tonumber(skull) or 0
+    local stage = skull - ELITE_MARK_BASE
+    if stage >= 1 and stage <= ELITE_MAX_STAGE then return stage end
+    return 0
+end
+
+function eliteStageOf(creature)
+    if not creature or not creature.getSkull then return 0 end
+    return eliteStageOfSkull(creature:getSkull())
+end
+
+function eliteStageName(stage)
+    return tr(STAGE_NAME[stage] or 'Normal')
+end
+
+function eliteShaderName(stage)
+    return SHADER[stage] or ''
+end
+
+function eliteStarImage(stage)
+    return STAR[stage]
+end
+
+function eliteCardStarsImage(stage)
+    return CARD_STARS[stage]
+end
+
+function eliteStarsSize(stage)
+    return STARS_SIZE[stage] or STARS_SIZE[1]
+end
+
+function eliteSheetOffset(stage)
+    return SHEET_OFFSET[stage] or SHEET_OFFSET[1]
+end
+
+-- Nome com o estágio, para listas (Kills Statistics, Bestiary Tracker).
+function eliteDisplayName(name, stage)
+    if (stage or 0) <= 0 then return name end
+    return string.format('%s (Elite %d)', name, stage)
+end
+
+local function registerShaders()
+    if shadersReady then return end
+    local ok = true
+    for stage = 1, ELITE_MAX_STAGE do
+        local path = resolvepath('elite_aura' .. stage .. '.frag')
+        if path then
+            -- useFramebuffer = true: o contorno é pintado fora do sprite
+            g_shaders.createFragmentShader(SHADER[stage], path, true)
+            g_shaders.setupOutfitShader(SHADER[stage])
+        else
+            ok = false
+        end
+    end
+    shadersReady = ok
+end
+
+-- Aplica (ou tira) a aura numa criatura (do mapa ou de um UICreature).
+function applyEliteLook(creature, stage)
+    if not creature or not creature.setShader then return end
+    registerShaders()
+    pcall(function() creature:setShader(SHADER[stage] or '') end)
+end
+
+local function onSkullChange(creature, skullId)
+    local stage = eliteStageOfSkull(skullId)
+    if stage > 0 then
+        creature:setSkullTexture(STAR[stage])
+        applyEliteLook(creature, stage)
+        creature.eliteStage = stage
+        return
+    end
+    -- voltou ao normal (ou nunca foi elite): tira a aura se era nossa
+    if creature.eliteStage and creature.eliteStage > 0 then
+        applyEliteLook(creature, 0)
+    end
+    creature.eliteStage = 0
+    if originalOnSkullChange then originalOnSkullChange(creature, skullId) end
+end
+
+function init()
+    registerShaders()
+    -- módulo sandboxed: a função é global de verdade (gamelib), por isso _G
+    originalGetSkullImagePath = _G.getSkullImagePath
+    _G.getSkullImagePath = function(skullId)
+        local stage = eliteStageOfSkull(skullId)
+        if stage > 0 then return STAR[stage] end
+        return originalGetSkullImagePath(skullId)
+    end
+    originalOnSkullChange = Creature.onSkullChange
+    Creature.onSkullChange = onSkullChange
+end
+
+function terminate()
+    if originalGetSkullImagePath then _G.getSkullImagePath = originalGetSkullImagePath end
+    if originalOnSkullChange then Creature.onSkullChange = originalOnSkullChange end
+end

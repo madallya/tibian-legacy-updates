@@ -1,0 +1,79 @@
+// Combat Stats (como no cliente do Miracle): abre e fecha pelo botão da barra
+// das Skills. Attack, Armor, Defense e o que os atributos equipados dão,
+// mandados pelo servidor (0xEB sub 3).
+CombatStats74Row < UIWidget
+  height: 14
+  phantom: true
+
+  Label
+    id: label
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-auto-resize: true
+    phantom: true
+
+  Label
+    id: value
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+    phantom: true
+
+  // ícone do elemento (Protection), depois do valor, como no Miracle
+  UIWidget
+    id: icon
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    size: 9 9
+    visible: false
+    phantom: true
+
+CombatStats74Separator < HorizontalSeparator
+  height: 2
+  margin-top: 4
+  margin-bottom: 4
+  phantom: true
+
+MiniWindow
+  id: combatStats74Window
+  height: 70
+  &save: true
+  @onOpen: modules.game_atributos74.onStatsOpen()
+  @onClose: modules.game_atributos74.onStatsClose()
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/topbuttons/skills
+    image-rect: 0 0 12 12
+    image-smooth: false
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('Combat Stats')
+    color: #9d9d9dff
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    padding-bottom: 4
+    layout:
+      type: verticalBox
+
+  MiniWindowCorner74

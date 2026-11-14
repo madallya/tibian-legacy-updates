@@ -1,0 +1,10 @@
+Module
+  name: game_playershop74
+  description: Comércio offline do Telmora (Player Shop, comando 0xEF): montar a própria loja, comprar na loja de outro jogador, histórico de vendas e a plaquinha de loja no personagem
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ playershop74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

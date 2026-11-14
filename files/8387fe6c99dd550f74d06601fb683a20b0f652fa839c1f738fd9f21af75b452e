@@ -1,0 +1,276 @@
+-- Cam (OTServ 7.4 / Telmora): mouse e teclado do jogador, como o "input tracking"
+-- do Miracle.
+--
+-- * Jogando: liga a gravacao do mouse/teclado no C++ (g_game.setInputTrail). O
+--   cliente manda um lote a cada 250 ms (comando 0xEC) e o servidor so grava na
+--   cam (cam_record_mouse no config.cfg). Nao vale para quem assiste cam ao vivo.
+-- * Tocando uma cam (Local Cams): legenda no canto inferior esquerdo do mapa com
+--   o tempo atual / total e a velocidade. PgUp acelera, PgDn desacelera e Insert
+--   mostra/esconde o mouse do jogador (seta, cliques e teclas apertadas).
+
+local SPEEDS = { 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64 }
+local CLICK_MS = 600     -- tempo que o anel do clique fica na tela
+local KEYS_MS = 2000     -- teclas apertadas nos ultimos 2 s
+local UPDATE_MS = 33
+local CLICK_COLORS = { [1] = '#ffd000', [2] = '#40c8ff', [3] = '#ff60ff' }
+
+local legend
+local cursor
+local clicks = {}
+local updateEvent
+local showMouse = false
+local playing = false
+local lastText
+
+local function formatTime(ms)
+    local s = math.floor((ms or 0) / 1000)
+    local h, m = math.floor(s / 3600), math.floor(s / 60) % 60
+    if h > 0 then
+        return string.format('%d:%02d:%02d', h, m, s % 60)
+    end
+    return string.format('%d:%02d', m, s % 60)
+end
+
+local function formatSpeed(speed)
+    if speed >= 1 then
+        return string.format('%dx', math.floor(speed + 0.5))
+    end
+    return (string.format('%.2f', speed):gsub('0+$', '')) .. 'x'
+end
+
+local function speedIndex()
+    local speed = g_game.getRecordSpeed()
+    local best, bestDiff = 3, math.huge
+    for i, s in ipairs(SPEEDS) do
+        local d = math.abs(s - speed)
+        if d < bestDiff then best, bestDiff = i, d end
+    end
+    return best
+end
+
+local function changeSpeed(step)
+    if not g_game.isPlayingRecord() then return end
+    local i = math.max(1, math.min(#SPEEDS, speedIndex() + step))
+    g_game.setRecordSpeed(SPEEDS[i])
+    lastText = nil
+end
+
+local function speedUp() changeSpeed(1) end
+local function speedDown() changeSpeed(-1) end
+
+local function mapPanel()
+    return modules.game_interface and modules.game_interface.getMapPanel and modules.game_interface.getMapPanel()
+end
+
+-- posicao do evento na tela de quem assiste (no mapa, relativa ao mapa)
+local function toScreen(e)
+    if e.area == 1 then
+        local map = mapPanel()
+        if map and map.getMapRect then
+            local r = map:getMapRect()
+            if r and r.width and r.width > 0 then
+                return { x = r.x + e.mx * r.width, y = r.y + e.my * r.height }
+            end
+        end
+    end
+    local size = rootWidget:getSize()
+    return { x = e.wx * size.width, y = e.wy * size.height }
+end
+
+local function hideMouseWidgets()
+    if cursor then cursor:hide() end
+    for _, w in ipairs(clicks) do w:hide() end
+end
+
+local function destroyWidgets()
+    if legend then legend:destroy(); legend = nil end
+    if cursor then cursor:destroy(); cursor = nil end
+    for _, w in ipairs(clicks) do w:destroy() end
+    clicks = {}
+    lastText = nil
+end
+
+local function createWidgets()
+    destroyWidgets()
+    local map = mapPanel()
+    if not map then return end
+
+    legend = g_ui.createWidget('Label', map)
+    legend:setId('camLegend')
+    legend:setFont('verdana-11px-rounded')
+    legend:setColor('#ffffff')
+    legend:setBackgroundColor('#000000b0')
+    legend:setTextAlign(AlignLeft)
+    legend:setPhantom(true)
+    legend:setTextOffset({ x = 6, y = 0 })
+    legend:addAnchor(AnchorBottom, 'parent', AnchorBottom)
+    legend:addAnchor(AnchorLeft, 'parent', AnchorLeft)
+    legend:setMarginBottom(6)
+    legend:setMarginLeft(6)
+
+    cursor = g_ui.createWidget('UIWidget', rootWidget)
+    cursor:setId('camCursor')
+    cursor:setImageSource('/images/cam/cursor')
+    cursor:setSize({ width = 15, height = 22 })
+    cursor:setPhantom(true)
+    cursor:setFocusable(false)
+    cursor:hide()
+end
+
+local function clickWidget(i)
+    if not clicks[i] then
+        local w = g_ui.createWidget('UIWidget', rootWidget)
+        w:setId('camClick' .. i)
+        w:setImageSource('/images/cam/click')
+        w:setPhantom(true)
+        w:setFocusable(false)
+        clicks[i] = w
+    end
+    return clicks[i]
+end
+
+local function keyText(e)
+    local ok, desc = pcall(determineKeyComboDesc, e.key, e.mods)
+    if ok and desc and desc ~= '' then return desc end
+    return tostring(e.key)
+end
+
+local function updateMouse(events)
+    local last, focused, keys = nil, true, {}
+    local n = 0
+    for _, e in ipairs(events) do
+        if e.type >= 1 and e.type <= 4 then
+            last = e
+        elseif e.type == 7 then
+            focused = false
+        elseif e.type == 8 then
+            focused = true
+        end
+        if e.type == 2 and e.age <= CLICK_MS then
+            n = n + 1
+            local w = clickWidget(n)
+            local p = toScreen(e)
+            local t = e.age / CLICK_MS
+            local size = math.floor(16 + 16 * t)
+            w:setSize({ width = size, height = size })
+            w:setPosition({ x = math.floor(p.x - size / 2), y = math.floor(p.y - size / 2) })
+            w:setImageColor(CLICK_COLORS[e.button] or '#ffffff')
+            w:setOpacity(1 - t * 0.6)
+            w:show()
+            w:raise()
+        elseif e.type == 5 and e.age <= KEYS_MS then
+            table.insert(keys, keyText(e))
+        end
+    end
+    for i = n + 1, #clicks do clicks[i]:hide() end
+
+    if last and cursor then
+        local p = toScreen(last)
+        cursor:setPosition({ x = math.floor(p.x), y = math.floor(p.y) })
+        cursor:show()
+        cursor:raise()
+    elseif cursor then
+        cursor:hide()
+    end
+    return last ~= nil, focused, keys
+end
+
+local function update()
+    if not g_game.isPlayingRecord() then return end
+    if not legend then createWidgets() end
+    if not legend then return end
+
+    local lines = {}
+    table.insert(lines, string.format('%s / %s   %s', formatTime(g_game.getRecordTime()),
+        formatTime(g_game.getRecordDuration()), formatSpeed(g_game.getRecordSpeed())))
+    table.insert(lines, tr('PgUp/PgDn: speed') .. '   ' .. (showMouse and tr('Insert: hide mouse') or tr('Insert: show mouse')))
+
+    if showMouse then
+        local events = g_game.getRecordInput(KEYS_MS) or {}
+        local hasMouse, focused, keys = updateMouse(events)
+        if not hasMouse and #events == 0 then
+            table.insert(lines, tr('This recording has no mouse data.'))
+        else
+            if #keys > 0 then
+                table.insert(lines, tr('Keys: %s', table.concat(keys, ', ')))
+            end
+            if not focused then
+                table.insert(lines, tr('Game window without focus'))
+            end
+        end
+    else
+        hideMouseWidgets()
+    end
+
+    local text = table.concat(lines, '\n')
+    if text ~= lastText then
+        lastText = text
+        legend:setText(text)
+        local size = legend:getTextSize()
+        legend:setSize({ width = size.width + 12, height = size.height + 6 })
+    end
+end
+
+local function toggleMouse()
+    if not g_game.isPlayingRecord() then return end
+    showMouse = not showMouse
+    lastText = nil
+    update()
+end
+
+local function bindKeys()
+    g_keyboard.bindKeyDown('PageUp', speedUp, rootWidget)
+    g_keyboard.bindKeyDown('PageDown', speedDown, rootWidget)
+    g_keyboard.bindKeyDown('Insert', toggleMouse, rootWidget)
+end
+
+local function unbindKeys()
+    g_keyboard.unbindKeyDown('PageUp', speedUp, rootWidget)
+    g_keyboard.unbindKeyDown('PageDown', speedDown, rootWidget)
+    g_keyboard.unbindKeyDown('Insert', toggleMouse, rootWidget)
+end
+
+local function stopPlaying()
+    if updateEvent then removeEvent(updateEvent); updateEvent = nil end
+    if playing then unbindKeys() end
+    playing = false
+    destroyWidgets()
+end
+
+local function onPingBack(ping)
+    if ping then g_game.setInputTrailPing(ping) end
+end
+
+local function onGameStart()
+    if g_game.isPlayingRecord() then
+        g_game.setInputTrail(false)
+        stopPlaying()
+        playing = true
+        showMouse = false
+        bindKeys()
+        updateEvent = cycleEvent(update, UPDATE_MS)
+        update()
+        return
+    end
+    -- espectador da cam ao vivo nao manda nada
+    g_game.setInputTrail(not G.watchingCam)
+end
+
+local function onGameEnd()
+    g_game.setInputTrail(false)
+    stopPlaying()
+end
+
+function init()
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd, onPingBack = onPingBack })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd, onPingBack = onPingBack })
+    onGameEnd()
+end
+
+function isShowingMouse()
+    return showMouse
+end

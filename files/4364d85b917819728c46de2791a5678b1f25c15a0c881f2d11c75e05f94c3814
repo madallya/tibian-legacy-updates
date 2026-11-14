@@ -1,0 +1,10 @@
+Module
+  name: game_cyclopedia74
+  description: Cyclopedia (Bestiary e Charm) e Bestiary Tracker no estilo do cliente do Miracle (dados do servidor, comando 0xE5)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ cyclopedia74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

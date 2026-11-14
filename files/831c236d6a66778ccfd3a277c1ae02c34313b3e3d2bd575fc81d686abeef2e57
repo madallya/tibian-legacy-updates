@@ -1,0 +1,52 @@
+// Preço de um item da loja (por unidade; lote: pelo container inteiro).
+MainWindow
+  id: playerShop74Price
+  !text: tr('Set price')
+  size: 260 138
+  visible: false
+  @onEscape: modules.game_playershop74.hidePrice()
+  @onEnter: modules.game_playershop74.confirmPrice()
+
+  PlayerShop74Text
+    id: info
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    height: 28
+    text-wrap: true
+    text-align: topLeft
+
+  PlayerShop74Text
+    id: priceLabel
+    !text: tr('Price (gold):')
+    anchors.top: info.bottom
+    anchors.left: parent.left
+    margin-top: 10
+    width: 90
+
+  TextEdit
+    id: price
+    anchors.verticalCenter: priceLabel.verticalCenter
+    anchors.left: priceLabel.right
+    anchors.right: parent.right
+    height: 20
+    max-length: 10
+
+  Button
+    id: okButton
+    !text: tr('Ok')
+    anchors.right: cancelButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 8
+    size: 64 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.confirmPrice()
+
+  Button
+    id: cancelButton
+    !text: tr('Cancel')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 64 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.hidePrice()

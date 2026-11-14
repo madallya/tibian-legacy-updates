@@ -1,0 +1,698 @@
+-- Store do Telmora (OTServ 7.4): Telmora Points, premium, gift e histórico, no
+-- layout da Shop do Miracle. Tudo vem do servidor pelo comando 0xEE (ver o
+-- protocolo em src/game/store.hh do servidor); o cliente só mostra e pede: o
+-- preço, o saldo e o destino do gift são conferidos lá.
+
+local OPCODE = 0xEE
+local IMAGES = '/game_store74/images/'
+local HISTORY_ROWS = 16
+
+local window
+local giftWindow
+local confirmBox
+local infoBox
+local historyRows = {}
+
+local state = {
+    balance = nil,     -- nil = ainda não chegou
+    categories = {},   -- { name, icon }
+    offers = {},       -- { id, category, name, description, price, icon, item, amount }
+    category = 0,
+    selected = nil,    -- oferta escolhida
+    history = false,   -- mostrando o histórico?
+    page = 0,
+    pages = 1,
+    waiting = false,   -- esperando a resposta de uma compra ou gift
+    -- 11/11 Outfits: prévia do detalhe (sexo 1 homem / 2 mulher, direção 0-3, andando?)
+    preview = { sex = 1, dir = 2, walk = true },
+}
+
+local function child(id)
+    return window and window:recursiveGetChildById(id)
+end
+
+local function formatCoins(n)
+    local s = string.format('%.0f', math.abs(n))
+    local out = s:reverse():gsub('(%d%d%d)', '%1.'):reverse()
+    if out:sub(1, 1) == '.' then out = out:sub(2) end
+    return out
+end
+
+local function setStatus(text)
+    local label = child('statusLabel')
+    if label then label:setText(text or '') end
+end
+
+local function send(fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then
+        setStatus(tr('You are not online.'))
+        return false
+    end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    fill(msg)
+    protocol:send(msg)
+    return true
+end
+
+-- a caixa pode já ter sido fechada pelo jogador (OK/Esc): só destrói se ainda existe
+local function destroyBox(box)
+    if box and not box:isDestroyed() then box:destroy() end
+end
+
+local function closeBoxes()
+    destroyBox(confirmBox); confirmBox = nil
+    destroyBox(infoBox); infoBox = nil
+end
+
+-- ------------------------------------------------------------------ saldo
+local function updateBalance()
+    if not window then return end
+    local text = state.balance and formatCoins(state.balance) or '...'
+    child('balanceLabel'):setText(tr('Points') .. ': ' .. text)
+    if giftWindow then
+        giftWindow:getChildById('transferable'):setText(tr('Transferable Telmora Points') .. ': ' .. text)
+    end
+    local buy = child('buyButton')
+    if buy then
+        buy:setEnabled(state.selected ~= nil and not state.waiting)
+    end
+end
+
+-- ------------------------------------------------------------------ brilho do Buy Now!
+-- Mesma barra de ouro do botão Store (folha de 122x22 por quadro: 0 parado e
+-- 1..12 com o brilho). As moedas pequenas (Store74Coin, 12x12 por quadro) usam o mesmo passo. Um evento que se reagenda só enquanto a janela está aberta.
+local SHINE_FRAMES, SHINE_FRAME_MS, SHINE_PAUSE_MS = 12, 55, 2200
+local shineEvent
+
+local function shineStep(frame)
+    shineEvent = nil
+    if not window or not window:isVisible() then return end
+    local button = child('buyButton')
+    local buyFrame = frame
+    if not button:isVisible() or not button:isEnabled() then buyFrame = 0 end
+    button:setImageClip(string.format('0 %d 122 22', buyFrame * 22))
+    -- 11/11: as Telmora Coins pequenas (preços, saldo, gift, histórico) brilham junto
+    local clip = string.format('0 %d 12 12', frame * 12)
+    for _, w in ipairs(window:recursiveGetChildren()) do
+        local id = w:getId()
+        if id == 'coin' or id == 'balanceCoin' or id == 'giftCoin' then w:setImageClip(clip) end
+        if id == 'coinBig' then w:setImageClip(string.format('0 %d 32 32', frame * 32)) end
+    end
+    local nextFrame = frame + 1
+    if nextFrame > SHINE_FRAMES then nextFrame = 0 end
+    shineEvent = scheduleEvent(function() shineStep(nextFrame) end, frame == 0 and SHINE_PAUSE_MS or SHINE_FRAME_MS)
+end
+
+local function startShine()
+    if not shineEvent then shineEvent = scheduleEvent(function() shineStep(0) end, SHINE_PAUSE_MS) end
+end
+
+local function stopShine()
+    if shineEvent then removeEvent(shineEvent); shineEvent = nil end
+end
+
+-- ------------------------------------------------------------------ ofertas
+-- ícone da oferta: item do cliente (Telmora Coin) ou imagem do módulo (coroas)
+local function hasImage(icon)
+    -- só as coroas (premium15..premium120); a moeda continua como item, com a quantidade
+    return icon ~= nil and icon:find('^premium%d') ~= nil and g_resources.fileExists(IMAGES .. icon .. '.png')
+end
+
+-- 11/11 (Others): oferta que só se compra pelo site (Change Name, Recovery Key,
+-- Character Account Transfer). O servidor manda a quantidade 0 nelas; o Buy Now!
+-- não cobra nada, só pede o endereço do site e abre o navegador (0xEE sub 5).
+local function isSiteOffer(offer)
+    return offer ~= nil and offer.amount == 0
+end
+
+local function openSite(url)
+    -- só endereço de site; nada de arquivo local ou outro protocolo
+    if type(url) ~= 'string' or #url > 300 then return end
+    if not url:find('^https?://[%w%.%-]+[%w%-%._~:/%?#%[%]@!%$&\'%(%)%*%+,;=%%]*$') then return end
+    g_platform.openUrl(url)
+end
+
+-- 11/11: a Telmora Coin das ofertas é a folha do módulo (brilho no passo da Store),
+-- por cima do lugar do item; a quantidade vai num texto igual ao do item.
+local function setCoinImage(itemWidget, offer, showCount)
+    local parent = itemWidget:getParent()
+    local big = parent:getChildById('coinBig')
+    local isCoin = offer ~= nil and offer.icon == 'coin' and g_resources.fileExists(IMAGES .. 'coin.png')
+    if not isCoin then
+        if big then big:setVisible(false) end
+        return false
+    end
+    if not big then
+        big = g_ui.createWidget('Store74CoinBig', parent)
+        big:setId('coinBig')
+        big:fill(itemWidget:getId())
+    end
+    big:getChildById('count'):setText((showCount and offer.amount > 1) and tostring(offer.amount) or '')
+    big:setVisible(true)
+    return true
+end
+
+-- 11/11 Outfits: o servidor manda o ícone "outfit:homem:mulher:addons" (outfits74.hh)
+local function parseOutfitIcon(icon)
+    if type(icon) ~= 'string' then return nil end
+    local m, f, a = icon:match('^outfit:(%d+):(%d+):(%d+)$')
+    if not m then return nil end
+    return { male = tonumber(m), female = tonumber(f), addons = tonumber(a) }
+end
+
+local function playerSex()
+    local player = g_game.getLocalPlayer()
+    local outfit = player and player:getOutfit()
+    -- a faixa feminina do 7.4 é 136-142; as extras femininas estão na tabela do servidor
+    if outfit and outfit.type and ((outfit.type >= 136 and outfit.type <= 143) or (outfit.type >= 161 and outfit.type <= 175)
+            or outfit.type == 178 or outfit.type == 179) then
+        return 2
+    end
+    return 1
+end
+
+-- boneco da oferta: com as cores do personagem (como no Miracle)
+local function outfitTable(o, sex, addons)
+    local player = g_game.getLocalPlayer()
+    local cur = player and player:getOutfit() or {}
+    return { type = (sex == 2) and o.female or o.male, head = cur.head or 78, body = cur.body or 69,
+             legs = cur.legs or 58, feet = cur.feet or 76, addons = addons or 0 }
+end
+
+local function setOfferImage(iconWidget, itemWidget, offer, noCount, creatureWidget)
+    if creatureWidget then creatureWidget:setVisible(false) end
+    -- 11/11 Outfits: o boneco da oferta
+    if offer and offer.outfit then
+        local parent = itemWidget:getParent()
+        local big = parent and parent:getChildById('coinBig')
+        if big then big:setVisible(false) end
+        iconWidget:setVisible(false)
+        itemWidget:setVisible(false)
+        if creatureWidget then
+            creatureWidget:setOutfit(outfitTable(offer.outfit, playerSex(), offer.outfit.addons))
+            creatureWidget:setVisible(true)
+        end
+        return
+    end
+    if setCoinImage(itemWidget, offer, not noCount) then
+        iconWidget:setVisible(false)
+        itemWidget:setVisible(false)
+        return
+    end
+    -- 10/11: desenho próprio do módulo (as coroas do premium) vale mais que o item do servidor
+    if offer and offer.item > 0 and not hasImage(offer.icon) then
+        iconWidget:setVisible(false)
+        itemWidget:setItemId(offer.item)
+        -- só a Telmora Coin mostra a quantidade (a coroa do premium não é pilha)
+        itemWidget:setItemCount(offer.icon == 'coin' and offer.amount or 1)
+        itemWidget:setVisible(true)
+    else
+        itemWidget:setVisible(false)
+        if offer and offer.icon ~= '' then
+            iconWidget:setImageSource(IMAGES .. offer.icon)
+            iconWidget:setVisible(true)
+        else
+            iconWidget:setVisible(false)
+        end
+    end
+end
+
+-- 11/11 Outfits: prévia do detalhe, como no Miracle
+local function updatePreview()
+    local offer = state.selected
+    local creatureWidget = child('detailCreature')
+    if not creatureWidget or not offer or not offer.outfit then return end
+    local addons = 0
+    if child('addon1'):isChecked() then addons = addons + 1 end
+    if child('addon2'):isChecked() then addons = addons + 2 end
+    creatureWidget:setOutfit(outfitTable(offer.outfit, state.preview.sex, addons))
+    local creature = creatureWidget:getCreature()
+    if creature then
+        creature:setDirection(state.preview.dir)
+        creature:setStaticWalking(state.preview.walk and 1000 or 0)
+    end
+    child('previewWalk'):setImageSource(IMAGES .. (state.preview.walk and 'walk_on' or 'walk_off'))
+    -- o botão mostra o sexo para o qual troca
+    child('previewSex'):setImageSource(IMAGES .. (state.preview.sex == 1 and 'sex_f' or 'sex_m'))
+end
+
+function togglePreviewWalk()
+    state.preview.walk = not state.preview.walk
+    updatePreview()
+end
+
+function togglePreviewSex()
+    state.preview.sex = (state.preview.sex == 1) and 2 or 1
+    updatePreview()
+end
+
+function turnPreview(delta)
+    state.preview.dir = (state.preview.dir + delta) % 4
+    updatePreview()
+end
+
+function onPreviewAddon()
+    updatePreview()
+end
+
+local function showDetail(offer)
+    state.selected = offer
+    child('detailName'):setText(offer and offer.name or '')
+    child('detailDescription'):setText(offer and offer.description or '')
+    local price = child('detailPrice')
+    price:getChildById('value'):setText(offer and formatCoins(offer.price) or '')
+    price:setVisible(offer ~= nil)
+    setOfferImage(child('detailIcon'), child('detailItem'), offer, nil, child('detailCreature'))
+    local isOutfit = offer ~= nil and offer.outfit ~= nil
+    for _, id in ipairs({ 'previewWalk', 'previewSex', 'previewLeft', 'previewRight', 'addon1Box', 'addon2Box' }) do
+        child(id):setVisible(isOutfit)
+    end
+    -- Miracle: em Outfits o Buy Now! fica embaixo dos dois "Show addon"
+    child('buyButton'):setMarginTop(isOutfit and 55 or 28)
+    if isOutfit then
+        state.preview = { sex = playerSex(), dir = 2, walk = true }
+        child('addon1'):setChecked(true)
+        child('addon2'):setChecked(true)
+        updatePreview()
+    end
+    updateBalance()
+end
+
+local function selectOffer(widget)
+    local list = child('offers')
+    for _, w in ipairs(list:getChildren()) do
+        w:getChildById('frame'):setImageSource(IMAGES .. (w == widget and 'frame_card_on' or 'frame_card'))
+    end
+    showDetail(widget and widget.offer or nil)
+end
+
+local function showCategory(index)
+    state.category = index
+    for _, w in ipairs(child('categories'):getChildren()) do
+        local on = (w.index == index)
+        w:getChildById('frame'):setImageSource(IMAGES .. (on and 'frame_button_on' or 'frame_button'))
+        w:getChildById('name'):setColor('#ffffff') -- Miracle: o nome é branco escolhido ou não (10/11)
+    end
+    local list = child('offers')
+    list:destroyChildren()
+    local first
+    for _, offer in ipairs(state.offers) do
+        if offer.category == index then
+            local w = g_ui.createWidget('Store74Offer', list)
+            w.offer = offer
+            w:getChildById('name'):setText(offer.name)
+            w:getChildById('price'):getChildById('value'):setText(formatCoins(offer.price))
+            local box = w:getChildById('imageBox')
+            setOfferImage(box:getChildById('icon'), box:getChildById('item'), offer, nil, box:getChildById('creature'))
+            w.onClick = function(self) selectOffer(self) end
+            first = first or w
+        end
+    end
+    selectOffer(first)
+end
+
+local function rebuildCategories()
+    local panel = child('categories')
+    panel:destroyChildren()
+    local firstIndex, hasCurrent
+    for i, cat in ipairs(state.categories) do
+        -- a primeira oferta da categoria dá o ícone; categoria sem oferta não aparece
+        local sample
+        for _, offer in ipairs(state.offers) do
+            if offer.category == i - 1 then sample = offer; break end
+        end
+        if sample then
+            local w = g_ui.createWidget('Store74Category', panel)
+            w.index = i - 1
+            w:getChildById('name'):setText(tr(cat.name))
+            -- 11/11: categoria com desenho próprio (Others: o pergaminho) usa o dela
+            if cat.icon ~= '' and cat.icon:find('^[%w_]+$') and g_resources.fileExists(IMAGES .. cat.icon .. '.png') then
+                w:getChildById('item'):setVisible(false)
+                w:getChildById('icon'):setImageSource(IMAGES .. cat.icon)
+                w:getChildById('icon'):setVisible(true)
+            else
+                setOfferImage(w:getChildById('icon'), w:getChildById('item'), sample, true)
+                w:getChildById('item'):setItemCount(1)
+            end
+            w.onClick = function()
+                if state.history then toggleHistory() end
+                showCategory(i - 1)
+            end
+            firstIndex = firstIndex or (i - 1)
+            if i - 1 == state.category then hasCurrent = true end
+        end
+    end
+    showCategory(hasCurrent and state.category or firstIndex or 0)
+end
+
+-- ------------------------------------------------------------------ histórico
+local function requestHistory()
+    send(function(msg) msg:addU8(4); msg:addU16(state.page) end)
+end
+
+local function showHistory(page, pages, rows)
+    state.page, state.pages = page, math.max(1, pages)
+    for i, row in ipairs(historyRows) do
+        local e = rows[i]
+        row:setVisible(e ~= nil)
+        if e then
+            row:getChildById('date'):setText(os.date('%Y-%m-%d %H:%M:%S', e.time))
+            local delta = row:getChildById('delta')
+            if e.delta >= 0 then
+                delta:setText('+' .. formatCoins(e.delta))
+                delta:setColor('#44d144')
+            else
+                delta:setText('-' .. formatCoins(e.delta))
+                delta:setColor('#e04a4a')
+            end
+            row:getChildById('description'):setText(e.description)
+        end
+    end
+    child('historyEmpty'):setVisible(#rows == 0 and page == 0)
+    child('historyPage'):setText(string.format('%d/%d', state.page + 1, state.pages))
+    child('historyPrev'):setEnabled(state.page > 0)
+    child('historyNext'):setEnabled(state.page + 1 < state.pages)
+end
+
+function changeHistoryPage(delta)
+    local page = math.max(0, math.min(state.pages - 1, state.page + delta))
+    if page == state.page then return end
+    state.page = page
+    requestHistory()
+end
+
+function toggleHistory()
+    if not window then return end
+    state.history = not state.history
+    for _, id in ipairs({ 'offersBox', 'offersList', 'offers', 'offersScroll', 'detailBox', 'detailName', 'detailImageBox',
+            'buyButton', 'detailPrice', 'descriptionBox', 'detailDescription' }) do
+        child(id):setVisible(not state.history)
+    end
+    child('historyBox'):setVisible(state.history)
+    child('historyButton'):setText(state.history and tr('Offers') or tr('History'))
+    if state.history then
+        state.page = 0
+        requestHistory()
+    else
+        showDetail(state.selected)
+    end
+end
+
+-- ------------------------------------------------------------------ compra
+function buySelected()
+    local offer = state.selected
+    if not offer or state.waiting then return end
+    closeBoxes()
+    if isSiteOffer(offer) then
+        -- sem confirmação nem espera: o servidor só responde com o endereço do site
+        send(function(msg) msg:addU8(2); msg:addU16(offer.id) end)
+        return
+    end
+    local yes = function()
+        closeBoxes()
+        if send(function(msg) msg:addU8(2); msg:addU16(offer.id) end) then
+            state.waiting = true
+            setStatus(tr('Please wait...'))
+            updateBalance()
+        end
+    end
+    local no = function() closeBoxes() end
+    confirmBox = displayGeneralBox(tr('Confirm Purchase'),
+        tr('Do you want to buy %s for %s Telmora Points?', offer.name, formatCoins(offer.price)),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+-- ------------------------------------------------------------------ gift
+function showGift()
+    if not giftWindow then return end
+    giftWindow:getChildById('recipient'):setText('')
+    giftWindow:getChildById('amount'):setText('0')
+    updateBalance()
+    giftWindow:show()
+    giftWindow:raise()
+    giftWindow:focus()
+    giftWindow:getChildById('recipient'):focus()
+end
+
+function hideGift()
+    if giftWindow then giftWindow:hide() end
+end
+
+-- quantia do gift: só números, de 0 até o saldo
+local function giftAmount()
+    if not giftWindow then return 0 end
+    return tonumber(giftWindow:getChildById('amount'):getText()) or 0
+end
+
+local function setGiftAmount(value)
+    local edit = giftWindow:getChildById('amount')
+    value = math.max(0, math.min(math.floor(value), state.balance or 0))
+    local text = string.format('%d', value)
+    if edit:getText() ~= text then
+        edit:setText(text)
+        edit:setCursorPos(#text)
+    end
+end
+
+local function onGiftAmountChange(edit, text)
+    local digits = text:gsub('%D', '')
+    -- campo vazio enquanto o jogador apaga para digitar: deixa
+    if digits == '' then
+        if text ~= '' then edit:setText('') end
+        return
+    end
+    setGiftAmount(tonumber(digits) or 0)
+end
+
+function stepGiftAmount(delta)
+    if not giftWindow then return end
+    setGiftAmount(giftAmount() + delta)
+end
+
+function sendGift()
+    if not giftWindow or state.waiting then return end
+    local name = giftWindow:getChildById('recipient'):getText():gsub('^%s+', ''):gsub('%s+$', '')
+    local amount = giftAmount()
+    closeBoxes()
+    if name == '' then
+        infoBox = displayInfoBox(tr('Gift Telmora Points'), tr('Please enter the name of the character that should receive the Telmora Points.'))
+        return
+    end
+    if amount < 1 then
+        infoBox = displayInfoBox(tr('Gift Telmora Points'), tr('Please enter a valid amount of Telmora Points.'))
+        return
+    end
+    local yes = function()
+        closeBoxes()
+        if send(function(msg) msg:addU8(3); msg:addString(name); msg:addU32(amount) end) then
+            state.waiting = true
+            setStatus(tr('Please wait...'))
+            updateBalance()
+        end
+    end
+    local no = function() closeBoxes() end
+    -- não há como desfazer um gift: confirma o nome e a quantia antes
+    confirmBox = displayGeneralBox(tr('Gift Telmora Points'),
+        tr('Do you want to gift %s Telmora Points to %s?\nThis cannot be undone.', formatCoins(amount), name),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+-- ------------------------------------------------------------------ servidor
+local function onStore(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        state.balance = msg:getU32()
+        updateBalance()
+    elseif sub == 2 then
+        state.categories, state.offers = {}, {}
+        for i = 1, msg:getU8() do
+            local name = msg:getString()
+            local icon = msg:getString()
+            state.categories[i] = { name = name, icon = icon }
+        end
+        for i = 1, msg:getU16() do
+            local o = {}
+            o.id = msg:getU16()
+            o.category = msg:getU8()
+            o.name = msg:getString()
+            o.description = msg:getString()
+            o.price = msg:getU32()
+            o.icon = msg:getString()
+            o.item = msg:getU16()
+            o.amount = msg:getU16()
+            o.outfit = parseOutfitIcon(o.icon)
+            state.offers[i] = o
+        end
+        if window then
+            setStatus('')
+            rebuildCategories()
+        end
+    elseif sub == 3 then
+        local action = msg:getU8()
+        local ok = msg:getU8() ~= 0
+        local text = msg:getString()
+        state.balance = msg:getU32()
+        state.waiting = false
+        if window then
+            setStatus('')
+            updateBalance()
+            if window:isVisible() then
+                closeBoxes()
+                infoBox = displayInfoBox(action == 3 and tr('Gift Telmora Points') or tr('Store'), text)
+            end
+            if ok and action == 3 then hideGift() end
+            if state.history then requestHistory() end
+        end
+    elseif sub == 4 then
+        local page = msg:getU16()
+        local pages = msg:getU16()
+        local rows = {}
+        for i = 1, msg:getU8() do
+            local e = {}
+            e.time = msg:getU32()
+            local d = msg:getU32()
+            if d >= 2147483648 then d = d - 4294967296 end
+            e.delta = d
+            e.after = msg:getU32()
+            e.description = msg:getString()
+            rows[i] = e
+        end
+        if window then showHistory(page, pages, rows) end
+    elseif sub == 5 then
+        -- Others: abrir o site (conta do jogador) no navegador
+        local url = msg:getString()
+        state.waiting = false
+        if window then
+            setStatus('')
+            updateBalance()
+            if window:isVisible() then openSite(url) end
+        end
+    end
+end
+
+-- ------------------------------------------------------------------ usar a Telmora Coin
+-- 11/11: usar a Telmora Coin (item 3157 do Tibia.dat) credita a pilha inteira de uma
+-- vez, então o cliente pergunta antes quantas estão sendo usadas. O g_game.use fica
+-- embrulhado (mesmo molde do g_game.open no features74.lua); o servidor continua
+-- conferindo tudo, a pergunta é só para o jogador não gastar a pilha sem querer.
+local COIN_ITEM_ID = 3157
+local COIN_POINTS = 10
+local rawUse
+local useBox
+
+local function closeUseBox()
+    destroyBox(useBox); useBox = nil
+end
+
+-- o item ainda é o mesmo de quando a pergunta abriu? (pilha mexida = pergunta de novo)
+local function sameCoin(thing, count)
+    if not thing or thing:getId() ~= COIN_ITEM_ID or thing:getCount() ~= count then return false end
+    local pos = thing:getPosition()
+    if pos and pos.x == 0xFFFF and pos.y >= 0x40 then
+        local container = g_game.getContainer(pos.y - 0x40)
+        local item = container and container:getItem(pos.z)
+        return item ~= nil and item:getId() == COIN_ITEM_ID and item:getCount() == count
+    end
+    return true
+end
+
+local function useWithConfirm(thing)
+    if not thing or not thing.isItem or not thing:isItem() or thing:getId() ~= COIN_ITEM_ID then
+        return rawUse(thing)
+    end
+    local count = math.max(1, thing:getCount())
+    closeUseBox()
+    local yes = function()
+        closeUseBox()
+        if sameCoin(thing, count) then
+            rawUse(thing)
+        else
+            modules.game_textmessage.displayFailureMessage(tr('The Telmora Coins were moved. Please use them again.'))
+        end
+    end
+    local no = function() closeUseBox() end
+    useBox = displayGeneralBox(tr('Use Telmora Coin'),
+        tr('Do you want to use %dx Telmora Coin?\nYou will receive %s Telmora Points.', count, formatCoins(count * COIN_POINTS)),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+local function hookUse()
+    if rawUse then return end
+    rawUse = g_game.use
+    g_game.use = useWithConfirm
+end
+
+local function unhookUse()
+    if rawUse then
+        g_game.use = rawUse
+        rawUse = nil
+    end
+end
+
+-- ------------------------------------------------------------------ janela
+function show()
+    if not window then return end
+    if state.history then toggleHistory() end
+    window:show()
+    window:raise()
+    window:focus()
+    state.waiting = false
+    updateBalance()
+    startShine()
+    if send(function(msg) msg:addU8(1) end) and #state.offers == 0 then
+        setStatus(tr('Loading...'))
+    end
+end
+
+function hide()
+    stopShine()
+    closeBoxes()
+    hideGift()
+    if window then window:hide() end
+end
+
+function toggle()
+    if window and window:isVisible() then hide() else show() end
+end
+
+local function onGameEnd()
+    hide()
+    closeUseBox()
+    state.balance = nil
+    state.waiting = false
+end
+
+function init()
+    window = g_ui.displayUI('store74')
+    window:hide()
+    giftWindow = g_ui.displayUI('storegift74')
+    giftWindow:hide()
+    giftWindow:getChildById('amount').onTextChange = onGiftAmountChange
+
+    local rows = child('historyRows')
+    for i = 1, HISTORY_ROWS do
+        local row = g_ui.createWidget('Store74HistoryRow', rows)
+        row:setVisible(false)
+        historyRows[i] = row
+    end
+    showDetail(nil)
+    updateBalance()
+
+    ProtocolGame.registerOpcode(OPCODE, onStore)
+    connect(g_game, { onGameEnd = onGameEnd })
+    hookUse()
+end
+
+function terminate()
+    unhookUse()
+    closeUseBox()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameEnd = onGameEnd })
+    stopShine()
+    closeBoxes()
+    if giftWindow then giftWindow:destroy(); giftWindow = nil end
+    if window then window:destroy(); window = nil end
+    historyRows = {}
+end

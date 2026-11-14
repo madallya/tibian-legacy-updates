@@ -1,0 +1,78 @@
+// Janela de lista: conteúdo de um lote (comprador) ou histórico de vendas (dono).
+MainWindow
+  id: playerShop74List
+  !text: tr('Shop')
+  size: 430 380
+  visible: false
+  @onEscape: modules.game_playershop74.hideList()
+
+  // lista dentro do mesmo quadro afundado das grades da loja (padrão Miracle), com a
+  // barra de rolagem dentro do quadro
+  PlayerShop74GridBox
+    id: rowsBox
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: separator.top
+    margin-bottom: 8
+
+    VerticalScrollBar
+      id: rowsScroll
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 2
+      step: 17
+      pixels-scroll: true
+
+    ScrollablePanel
+      id: rows
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: rowsScroll.left
+      margin: 3 2 3 4
+      vertical-scrollbar: rowsScroll
+      layout:
+        type: verticalBox
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 8
+
+  Button
+    id: prevButton
+    text: <
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    size: 24 22
+    @onClick: modules.game_playershop74.changeSalesPage(-1)
+
+  PlayerShop74Text
+    id: pageLabel
+    anchors.left: prevButton.right
+    anchors.verticalCenter: prevButton.verticalCenter
+    margin-left: 6
+    width: 50
+    text-align: center
+
+  Button
+    id: nextButton
+    text: >
+    anchors.left: pageLabel.right
+    anchors.bottom: parent.bottom
+    margin-left: 6
+    size: 24 22
+    @onClick: modules.game_playershop74.changeSalesPage(1)
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 64 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.hideList()

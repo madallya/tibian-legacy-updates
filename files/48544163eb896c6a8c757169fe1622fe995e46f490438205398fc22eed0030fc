@@ -1,0 +1,10 @@
+Module
+  name: game_hunt74
+  description: Hunt Analyzer no estilo do cliente do Miracle (sessão, Exp/Loot/Kills Statistics e preços), com os eventos do servidor (comando 0xEA)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ hunt74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

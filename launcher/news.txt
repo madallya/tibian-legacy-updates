@@ -1,0 +1,10 @@
+# Nov 13 2026 | One year of Telmora: the road to the beta | pinned
+Telmora has been in development for a year now. During this alpha phase we brought back the classic Tibia 7.4 world and built our own systems on top of it, such as the bestiary and charms, elite creatures, item attribution, the player shop and the store.
+
+We are now in the final part of the alpha: polishing the features and building new hunts. Then come the two beta phases and, after them, the launch.
+
+{roadmap}
+
+Do you want to be part of the beta? Leave your email or your Discord username and we will contact you when the beta opens.
+
+{beta-signup}

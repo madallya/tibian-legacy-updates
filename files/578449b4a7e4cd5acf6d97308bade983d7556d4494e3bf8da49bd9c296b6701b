@@ -1,0 +1,1153 @@
+-- Comércio offline do Telmora (Player Shop, OTServ 7.4), nos moldes do Miracle.
+-- Tudo vem do servidor pelo comando 0xEF (protocolo em src/game/playershop.hh do
+-- servidor); o cliente só mostra e pede: lugar, preço, ouro, capacidade e taxa
+-- são conferidos lá.
+--  * a própria loja: clique direito no personagem -> "Open shop"; itens entram
+--    arrastando para a janela ou pelo clique direito -> "Add to shop";
+--  * loja de outro jogador: clique direito nele -> "Browse shop";
+--  * personagem com a loja aberta ganha a plaquinha (ícone + descrição) em cima.
+
+local OPCODE = 0xEF
+local SALES_ROWS = 16
+local STATE_NONE, STATE_EDIT, STATE_OPEN = 0, 1, 2
+local SHOP_NAME_COLOR = '#ff9a1f'   -- laranja (escolha do dono, 10/11): nome e vida de quem está com a loja aberta
+local MARK_ASK_EVERY = 10     -- segundos entre duas perguntas sobre a mesma criatura
+local MARK_BATCH = 20
+local MARK_RETRY_MS = 800     -- pergunta sem resposta (pacote perdido, login ainda em andamento): pergunta de novo
+local MARK_FLUSH_MS = 80      -- junta as criaturas que aparecem juntas (login, andar) num pedido só
+local MARK_GAP_MS = 1000      -- no máximo um pedido por segundo (o servidor aceita 4 de uma vez e 1 por segundo)
+local markLastSend = 0
+local SIGN_TEXT_W = 120       -- largura máxima do texto da plaquinha (quebra em linhas)
+local SIGN_BASE = 17          -- distância da base da plaquinha ao ponto de fixação (acima do nome)
+local DESC_MAX = 50           -- letras da descrição (o servidor corta no mesmo limite)
+
+local ownWindow, browseWindow, listWindow, priceWindow, descWindow
+local infoBox, confirmBox
+local markEvent
+local markFlushEvent
+
+local own = { state = STATE_NONE, right = 0, tax = 0, description = '', offers = {} }
+local shop = nil            -- loja aberta na janela do comprador: { id, owner, description, lines }
+local listMode = nil        -- 'lot' ou 'sales'
+local lotOf = nil           -- { id, key } do lote mostrado
+local sales = { page = 0, pages = 1 }
+local priceOffer = nil      -- oferta que está recebendo preço
+local ownSel = nil          -- janela do vendedor: id da oferta escolhida
+local ownLook = {}          -- [id da oferta] = texto do look
+local ownBank = nil         -- saldo do banco (servidor novo)
+local ownSetDescription     -- (definida na parte da própria loja)
+local marks = {}            -- [id da criatura] = { open, description, asked, answered, askedMs }
+local pending = {}          -- ids para perguntar ao servidor
+
+local function formatGold(n)
+    local s = string.format('%.0f', math.abs(n or 0))
+    local out = s:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+    if out:sub(1, 1) == ',' then out = out:sub(2) end
+    return out
+end
+
+-- 3.400 como no Miracle (janela do comprador)
+local function formatGoldDot(n)
+    return (formatGold(n):gsub(',', '.'))
+end
+
+local function formatLeft(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    if hours > 0 then return tr('%d h %d min', hours, minutes) end
+    return tr('%d min', math.max(1, minutes))
+end
+
+-- versão do formato da própria loja pedida ao servidor (bit 2 = saldo + quantidades;
+-- bit 4 = versão 4, moldura de atributos e tempo/cargas de cada oferta no sub 19; o
+-- bit 1 diz "janela aberta" e só vai junto quando a janela abre, ver showOwn)
+local OWN_VERSION = 2 + 4
+
+-- versão 4 (sub 19): moldura de atributos e tempo/cargas de cada casa, como no inventário
+local ownExtras = {}       -- [id da oferta] = { attr, kind, value }
+local browseExtras = {}    -- [chave da linha] = { attr, kind, value }
+
+local function applyExtras(slot, e)
+    if not slot then return end
+    ItemsDatabase.setAttrFrame(slot, e and e.attr or 0)
+    local clock = modules.game_itemclock74
+    if clock and clock.showOn then
+        clock.showOn(slot, e and e.kind or 0, e and e.value or 0)
+    end
+end
+
+local function send(fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then return false end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    fill(msg)
+    protocol:send(msg)
+    return true
+end
+
+local function destroyBox(box)
+    if box and not box:isDestroyed() then box:destroy() end
+end
+
+local function closeBoxes()
+    destroyBox(infoBox); infoBox = nil
+    destroyBox(confirmBox); confirmBox = nil
+end
+
+local function setStatus(window, text)
+    if not window then return end
+    local label = window:getChildById('statusLabel')
+    if label then label:setText(text or '') end
+end
+
+local function selectedRow(list)
+    for _, w in ipairs(list:getChildren()) do
+        if w:isFocused() then return w end
+    end
+    return nil
+end
+
+local function fillRow(row, itemId, count, name, info, price)
+    local item = row:getChildById('item')
+    item:setItemId(itemId)
+    item:setItemCount(math.max(1, count))
+    row:getChildById('name'):setText(name)
+    row:getChildById('info'):setText(info or '')
+    row:getChildById('price'):setText(price or '')
+end
+
+-- ------------------------------------------------------------------ loja de outro jogador
+-- Janela no layout do Miracle: grade com uma casa por linha da loja (lotes iguais
+-- numa casa só, com a quantidade disponível), "Container items" do lote escolhido,
+-- quadro com nome/quantidade/preço/peso, o look na descrição e o ouro que se carrega.
+local BROWSE_VERSION = 4       -- byte no fim do sub 10: ouro do comprador (2) e o sub 19 (4)
+local browseSel = nil          -- chave da linha escolhida
+local browseGold = nil         -- ouro que o comprador carrega (nil = servidor antigo)
+local lookWait = nil           -- { untilMs, key, index } esperando o "You see" do servidor
+local lookText = {}            -- [chave] = texto do look da linha (índice 0)
+
+local function lineByKey(key)
+    if not shop then return nil end
+    for _, line in ipairs(shop.lines) do
+        if line.key == key then return line end
+    end
+    return nil
+end
+
+-- a grade não depende do foco (o painel não é focável): realce e clique na mão
+local function markSlot(grid, chosen)
+    for _, w in ipairs(grid:getChildren()) do
+        local sel = w:getChildById('selected')
+        if sel then sel:setVisible(w == chosen) end
+    end
+end
+
+local function onSlotClick(slot, fn)
+    slot.onMouseRelease = function(self, mousePos, button)
+        if button ~= MouseLeftButton or not self:containsPoint(mousePos) then return false end
+        markSlot(self:getParent(), self)
+        fn(self)
+        return true
+    end
+end
+
+local function setSlot(slot, itemId, drawCount, shown)
+    slot:setItemId(itemId)
+    slot:setItemCount(math.max(1, drawCount))
+    -- a quantidade do jeito do Miracle: o que a loja tem (ou as cargas/pilha do item)
+    slot:setDisplayCount(shown > 1 and shown or 0)
+    slot:setShowCount(shown > 1)
+end
+
+local function weightOf(text, line)
+    if not text or not line then return nil end
+    local w = text:match('weighs? ([%d%.]+) oz') or text:match('weigh ([%d%.]+) oz')
+    w = tonumber(w)
+    if not w then return nil end
+    -- o look de uma pilha dá o peso da pilha inteira: divide pela quantidade dela
+    if line.cumulative and line.count > 1 then w = w / line.count end
+    return w
+end
+
+local function amountOf()
+    if not browseWindow then return 1 end
+    return math.max(1, browseWindow:recursiveGetChildById('amountScroll'):getValue())
+end
+
+local function updateInfo()
+    if not browseWindow then return end
+    local line = lineByKey(browseSel)
+    local name = browseWindow:recursiveGetChildById('name')
+    local amountScroll = browseWindow:recursiveGetChildById('amountScroll')
+    local amountLabel = browseWindow:recursiveGetChildById('amountLabel')
+    local priceLabel = browseWindow:recursiveGetChildById('priceLabel')
+    local priceCoin = browseWindow:recursiveGetChildById('priceCoin')
+    local weightLabel = browseWindow:recursiveGetChildById('weightLabel')
+    local preview = browseWindow:recursiveGetChildById('preview')
+    local buy = browseWindow:recursiveGetChildById('buyButton')
+    if not line then
+        name:setText('')
+        amountScroll:setEnabled(false)
+        amountLabel:setText('')
+        priceLabel:setText('')
+        priceCoin:setVisible(false)
+        weightLabel:setText('')
+        preview:setItemId(0)
+        applyExtras(preview, nil)
+        buy:setEnabled(false)
+        return
+    end
+    local amount = amountOf()
+    local total = line.price * amount
+    -- lote: só o nome do container ("bag with 3x rope" -> "Bag"); o conteúdo aparece embaixo
+    local title = line.lot and (line.name:match('^(.-) with ') or line.name) or line.name
+    title = title:gsub('^an? ', '')
+    name:setText((title:gsub('(%a)([%w]*)', function(a, b) return a:upper() .. b end)))
+    amountScroll:setEnabled(line.available > 1)
+    amountLabel:setText(tr('Amount: %dx', amount))
+    priceLabel:setText(tr('Price: %s', formatGoldDot(total)))
+    priceCoin:setVisible(true)
+    local afford = browseGold == nil or browseGold >= total
+    -- como no Miracle: preço apagado e "buy" desligado quando o ouro não dá
+    priceLabel:setColor(afford and '#c0c0c0' or '#7a7a7a')
+    buy:setEnabled(afford)
+    local w = weightOf(lookText[line.key], line)
+    weightLabel:setText(w and tr('Weight: %.2f oz', w * amount) or '')
+    setSlot(preview, line.item, line.count, line.lot and 0 or (line.cumulative and math.min(amount, 100) or line.count))
+    applyExtras(preview, browseExtras[line.key])
+end
+
+local function askLook(key, index)
+    if not shop then return end
+    lookWait = { untilMs = g_clock.millis() + 3000, key = key, index = index }
+    local id = shop.id
+    send(function(msg) msg:addU8(12); msg:addU32(id); msg:addU32(key); msg:addU8(index) end)
+end
+
+local function setDescription(text)
+    if browseWindow then browseWindow:recursiveGetChildById('description'):setText(text or '') end
+end
+
+local function fillContent(items)
+    if not browseWindow then return end
+    local grid = browseWindow:recursiveGetChildById('content')
+    grid:destroyChildren()
+    for i, it in ipairs(items or {}) do
+        local slot = g_ui.createWidget('PlayerShop74Slot', grid)
+        setSlot(slot, it.item, it.count, it.count)
+        onSlotClick(slot, function() if browseSel then askLook(browseSel, i) end end)
+    end
+    local label = browseWindow:getChildById('contentLabel')
+    if items and #items > 0 then
+        label:setText(tr('Container items (%d)', #items))
+    else
+        label:setText(tr('Container items'))
+    end
+end
+
+local function selectLine(key)
+    browseSel = key
+    local line = lineByKey(key)
+    local scroll = browseWindow:recursiveGetChildById('amountScroll')
+    scroll:setMinimum(1)
+    scroll:setMaximum(math.max(1, line and math.min(line.available, 10000) or 1))
+    scroll:setValue(1)
+    fillContent(nil)
+    setDescription(line and lookText[key] or '')
+    updateInfo()
+    if not line then return end
+    if not lookText[key] then askLook(key, 0) end
+    -- lote: mostra logo o que vem dentro
+    if line.lot then
+        local id = shop.id
+        send(function(msg) msg:addU8(13); msg:addU32(id); msg:addU32(key) end)
+    end
+end
+
+local function refreshBrowse()
+    if not browseWindow or not shop then return end
+    browseWindow:setText(tr("%s's Shop", shop.owner))
+    local filter = browseWindow:getChildById('search'):getText():lower()
+    local grid = browseWindow:recursiveGetChildById('items')
+    grid:destroyChildren()
+    local keep = nil
+    for _, line in ipairs(shop.lines) do
+        if filter == '' or line.name:lower():find(filter, 1, true) then
+            local slot = g_ui.createWidget('PlayerShop74Slot', grid)
+            slot.line = line
+            setSlot(slot, line.item, line.count, line.available > 1 and line.available or line.count)
+            applyExtras(slot, browseExtras[line.key])
+            slot:setTooltip(line.name)
+            onSlotClick(slot, function(self) if self.line.key ~= browseSel then selectLine(self.line.key) end end)
+            if line.key == browseSel then keep = slot end
+        end
+    end
+    if keep then
+        markSlot(grid, keep)
+        updateInfo()
+    elseif browseSel ~= nil then
+        -- 13/11: abre sem nada escolhido (nada de pegar a primeira sozinho); se o
+        -- item escolhido sumiu (vendido/filtro), volta para a descricao da loja
+        selectLine(nil)
+        setDescription(shop.description or '')
+    end
+    browseWindow:getChildById('goldBox'):getChildById('value'):setText(browseGold and formatGoldDot(browseGold) or '-')
+end
+
+function clearSearch()
+    if browseWindow then browseWindow:getChildById('search'):setText('') end
+end
+
+function browse(creature)
+    if not creature or not browseWindow then return end
+    local id = creature:getId()
+    shop = { id = id, owner = creature:getName(), description = '', lines = {} }
+    browseExtras = {}
+    browseSel, lookText, lookWait = nil, {}, nil
+    browseWindow:recursiveGetChildById('items'):destroyChildren()
+    browseWindow:getChildById('search'):setText('')
+    fillContent(nil)
+    setDescription(tr('Loading...'))
+    updateInfo()
+    browseWindow:setText(tr("%s's Shop", shop.owner))
+    browseWindow:show()
+    browseWindow:raise()
+    browseWindow:focus()
+    send(function(msg) msg:addU8(10); msg:addU32(id); msg:addU8(BROWSE_VERSION) end)
+end
+
+function hideBrowse()
+    if browseWindow then browseWindow:hide() end
+    shop, browseSel, lookWait = nil, nil, nil
+end
+
+function buySelected()
+    if not browseWindow or not shop then return end
+    local line = lineByKey(browseSel)
+    if not line then return end
+    local amount = amountOf()
+    closeBoxes()
+    local id, key, price = shop.id, line.key, line.price
+    local yes = function()
+        closeBoxes()
+        send(function(msg) msg:addU8(11); msg:addU32(id); msg:addU32(key); msg:addU32(price); msg:addU16(amount) end)
+    end
+    local no = function() closeBoxes() end
+    confirmBox = displayGeneralBox(tr('Confirm Purchase'),
+        tr('Do you want to buy %dx %s for %s gold?', amount, line.name, formatGold(price * amount)),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+-- o servidor responde o look como mensagem de texto: a primeira "You see" que chega
+-- logo depois do pedido vai para a descrição da janela
+local function onLookText(mode, text)
+    if not lookWait or not text then return end
+    if g_clock.millis() > lookWait.untilMs then lookWait = nil; return end
+    if not text:find('^You see') then return end
+    local wait = lookWait
+    lookWait = nil
+    if wait.own then
+        if wait.index == 0 then ownLook[wait.key] = text end
+        if wait.key == ownSel then ownSetDescription(text) end
+        return
+    end
+    if wait.index == 0 then lookText[wait.key] = text end
+    if wait.key == browseSel then
+        setDescription(text)
+        updateInfo()
+    end
+end
+
+-- ------------------------------------------------------------------ a própria loja
+-- Janela do vendedor no layout do Miracle: taxa, "Idle Shop", "Edit Description",
+-- grade das ofertas ("Container items" embaixo quando a escolhida é um container),
+-- nome, "Price (un):" (Enter ou sair do campo grava), quantidade, desenho, look,
+-- saldo do banco, "Start Shop", "History" e "Close". Com a janela aberta o servidor
+-- não deixa mover item do inventário; fechar a janela com a loja aberta pausa a loja
+-- (o "Idle Shop" sai do jogo sem fechar, e a loja continua vendendo).
+local OWN_TALL, OWN_SHORT = 233, 136
+
+local function ownOffer(id)
+    for _, o in ipairs(own.offers) do
+        if o.id == id then return o end
+    end
+    return nil
+end
+
+local function ownShowContent(show)
+    ownWindow:getChildById('offersBox'):setHeight(show and OWN_SHORT or OWN_TALL)
+    ownWindow:getChildById('ownContentLabel'):setVisible(show)
+    ownWindow:getChildById('ownContentBox'):setVisible(show)
+    if not show then ownWindow:recursiveGetChildById('ownContent'):destroyChildren() end
+end
+
+function ownSetDescription(text)
+    if ownWindow then ownWindow:recursiveGetChildById('ownDescription'):setText(text or '') end
+end
+
+local ownCommitPrice
+local ownAmountBusy = false   -- mexendo na barra por código (não manda ao servidor)
+
+local ownAmountPending = nil   -- { id, value }: mexido na barra e ainda não mandado
+
+local function ownSelling(offer)
+    if offer.lot then return 1 end
+    -- enquanto a pessoa mexe, uma resposta antiga do servidor não volta a barra para trás
+    if ownAmountPending and ownAmountPending.id == offer.id then return ownAmountPending.value end
+    return math.max(1, offer.selling or offer.count)
+end
+
+local function ownUpdateInfo()
+    local offer = ownOffer(ownSel)
+    local name = ownWindow:recursiveGetChildById('ownName')
+    local price = ownWindow:recursiveGetChildById('ownPrice')
+    local amount = ownWindow:recursiveGetChildById('ownAmountLabel')
+    local scroll = ownWindow:recursiveGetChildById('ownAmountScroll')
+    local preview = ownWindow:recursiveGetChildById('ownPreview')
+    local editable = own.state ~= STATE_OPEN
+    ownAmountBusy = true
+    if not offer then
+        -- como no Miracle: "None selected", preço 1 apagado, 0x e a barra cheia
+        name:setText(tr('None selected'))
+        price:setText('1')
+        price:setEnabled(false)
+        amount:setText(tr('Amount: %dx', 0))
+        scroll:setMinimum(1); scroll:setMaximum(1); scroll:setValue(1)
+        scroll:setEnabled(true)
+        preview:setItemId(0)
+        applyExtras(preview, nil)
+        ownAmountBusy = false
+        return
+    end
+    local title = offer.lot and (offer.name:match('^(.-) with ') or offer.name) or offer.name
+    title = title:gsub('^an? ', '')
+    name:setText((title:gsub('(%a)([%w]*)', function(a, b) return a:upper() .. b end)))
+    price:setEnabled(editable)
+    if not editable or not price:isFocused() then price:setText(offer.price > 0 and tostring(offer.price) or '') end
+    -- quantidade a vender: 1 até a pilha inteira (uma unidade: barra cheia, como no Miracle)
+    local total = offer.lot and 1 or math.max(1, offer.total or offer.count)
+    local selling = ownSelling(offer)
+    scroll:setMinimum(1)
+    scroll:setMaximum(total)
+    scroll:setValue(selling)
+    scroll:setEnabled(editable)
+    amount:setText(tr('Amount: %dx', selling))
+    setSlot(preview, offer.item, offer.count, offer.lot and 0 or selling)
+    applyExtras(preview, ownExtras[offer.id])
+    ownAmountBusy = false
+end
+
+-- barra de quantidade: manda ao servidor quando a pessoa para de mexer
+local ownAmountEvent = nil
+local function ownAmountChanged(value)
+    if ownAmountBusy or not ownWindow then return end
+    local offer = ownOffer(ownSel)
+    if not offer or offer.lot or own.state == STATE_OPEN then return end
+    ownWindow:recursiveGetChildById('ownAmountLabel'):setText(tr('Amount: %dx', value))
+    -- 11/11: o desenho e a casa da grade mudam na hora (antes esperavam a resposta do servidor);
+    -- o servidor recebe só quando a pessoa para de mexer
+    offer.selling = value
+    ownAmountPending = { id = offer.id, value = value }
+    setSlot(ownWindow:recursiveGetChildById('ownPreview'), offer.item, offer.count, value)
+    applyExtras(ownWindow:recursiveGetChildById('ownPreview'), ownExtras[offer.id])
+    for _, slot in ipairs(ownWindow:recursiveGetChildById('offers'):getChildren()) do
+        if slot.offer and slot.offer.id == offer.id then setSlot(slot, offer.item, offer.count, value) end
+    end
+    if ownAmountEvent then removeEvent(ownAmountEvent) end
+    local id = offer.id
+    ownAmountEvent = scheduleEvent(function()
+        ownAmountEvent = nil
+        ownAmountPending = nil
+        send(function(msg) msg:addU8(18); msg:addU32(id); msg:addU16(value) end)
+    end, 250)
+end
+
+local function ownAskLook(id, index)
+    lookWait = { untilMs = g_clock.millis() + 3000, own = true, key = id, index = index }
+    send(function(msg) msg:addU8(16); msg:addU32(id); msg:addU8(index) end)
+end
+
+local function ownSelect(id)
+    if ownSel and ownSel ~= id then ownCommitPrice() end
+    ownSel = id
+    if ownWindow then
+        local price = ownWindow:recursiveGetChildById('ownPrice')
+        local offer = ownOffer(id)
+        price:setText(offer and offer.price > 0 and tostring(offer.price) or '')
+    end
+    local offer = ownOffer(id)
+    ownShowContent(offer ~= nil and offer.lot)
+    -- a grade encolhe com um container escolhido: rola até a casa escolhida continuar à vista
+    if offer and offer.lot and ownWindow then
+        addEvent(function()
+            if not ownWindow or ownSel ~= id then return end
+            local grid = ownWindow:recursiveGetChildById('offers')
+            for _, slot in ipairs(grid:getChildren()) do
+                if slot.offer and slot.offer.id == id then grid:ensureChildVisible(slot); break end
+            end
+        end)
+    end
+    ownSetDescription(offer and ownLook[id] or '')
+    ownUpdateInfo()
+    if not offer then return end
+    if not ownLook[id] then ownAskLook(id, 0) end
+    if offer.lot then
+        send(function(msg) msg:addU8(17); msg:addU32(id) end)
+    end
+end
+
+-- grava o preço digitado (Enter ou sair do campo)
+function ownCommitPrice()
+    if not ownWindow or own.state == STATE_OPEN then return end
+    local offer = ownOffer(ownSel)
+    if not offer then return end
+    local digits = ownWindow:recursiveGetChildById('ownPrice'):getText():gsub('%D', '')
+    local price = tonumber(digits)
+    if not price or price == offer.price then return end
+    if price < 1 or price > 2000000000 then
+        closeBoxes()
+        infoBox = displayInfoBox(tr('Shop'), tr('Please enter a price between 1 and 2,000,000,000 gold.'))
+        return
+    end
+    local id = offer.id
+    send(function(msg) msg:addU8(3); msg:addU32(id); msg:addU32(price) end)
+end
+
+local function ownMenu(slot, mousePos)
+    if own.state == STATE_OPEN then return end
+    local menu = g_ui.createWidget('PopupMenu')
+    menu:setGameMenu(true)
+    menu:addOption(tr('Remove from shop'), function()
+        local id = slot.offer.id
+        send(function(msg) msg:addU8(4); msg:addU32(id) end)
+    end)
+    menu:addOption(tr('Remove all'), function() removeAll() end)
+    menu:display(mousePos)
+end
+
+local function refreshOwn()
+    if not ownWindow then return end
+    local fee = ownWindow:getChildById('feeLabel')
+    if own.right > 0 then
+        fee:setText(tr('Fee: %d%%', own.tax) .. '    ' .. tr('Time: %s', formatLeft(own.right)))
+        fee:setTooltip(tr('Shop time: %s (only used up while the shop is open). Sales fee: %d%%.', formatLeft(own.right), own.tax))
+    else
+        fee:setText(tr('Fee: %d%%', own.tax))
+        fee:setTooltip(tr('You need a Private Store Document to run a shop.'))
+    end
+
+    local grid = ownWindow:recursiveGetChildById('offers')
+    grid:destroyChildren()
+    local keep = nil
+    for _, offer in ipairs(own.offers) do
+        local slot = g_ui.createWidget('PlayerShop74Slot', grid)
+        slot.offer = offer
+        setSlot(slot, offer.item, offer.count, offer.lot and 0 or ownSelling(offer))
+        applyExtras(slot, ownExtras[offer.id])
+        slot:setTooltip(offer.name .. (offer.price > 0 and '' or (' - ' .. tr('no price'))))
+        onSlotClick(slot, function(self) if self.offer.id ~= ownSel then ownSelect(self.offer.id) end end)
+        slot.onMousePress = function(self, mousePos, button)
+            if button == MouseRightButton then
+                markSlot(grid, self)
+                if self.offer.id ~= ownSel then ownSelect(self.offer.id) end
+                ownMenu(self, mousePos)
+                return true
+            end
+            return false
+        end
+        if offer.id == ownSel then keep = slot end
+    end
+    if keep then
+        markSlot(grid, keep)
+        ownUpdateInfo()
+    elseif grid:getChildCount() > 0 then
+        local first = grid:getFirstChild()
+        markSlot(grid, first)
+        ownSelect(first.offer.id)
+    else
+        ownSelect(nil)
+        ownSetDescription('')
+    end
+    grid:setTooltip(own.right > 0
+        and tr('Drag items from your main backpack into this window, or right-click an item and choose "Add to shop". A container is sold with everything inside. Prices are per unit.')
+        or tr('You need a Private Store Document to run a shop.'))
+
+    local open = (own.state == STATE_OPEN)
+    ownWindow:getChildById('startButton'):setText(open and tr('Stop Shop') or tr('Start Shop'))
+    ownWindow:getChildById('idleButton'):setEnabled(open)
+    ownWindow:getChildById('editDescButton'):setEnabled(not open)
+    ownWindow:recursiveGetChildById('ownGoldBox'):getChildById('value'):setText(ownBank and formatGoldDot(ownBank) or '-')
+    local me = g_game.getLocalPlayer()
+    ownWindow:setText(tr("%s's Shop", me and me:getName() or ''))
+end
+
+function showOwn()
+    if not ownWindow then return end
+    ownWindow:show()
+    ownWindow:raise()
+    ownWindow:focus()
+    ownLook = {}
+    -- 1 = janela aberta: o servidor trava os itens do inventário e manda o saldo do banco
+    send(function(msg) msg:addU8(1); msg:addU8(OWN_VERSION + 1) end)
+end
+
+-- fecha a janela: o servidor solta os itens e, se a loja estiver aberta, pausa
+function hideOwn()
+    hidePrice()
+    hideDescription()
+    if ownWindow and ownWindow:isVisible() then
+        ownWindow:hide()
+        send(function(msg) msg:addU8(9) end)
+    end
+end
+
+function askDescription()
+    if not ownWindow or not descWindow or own.state == STATE_OPEN then return end
+    local edit = descWindow:getChildById('descEdit')
+    edit:setMaxLength(DESC_MAX)
+    edit:setText(own.description or '')
+    descWindow:show()
+    descWindow:raise()
+    descWindow:focus()
+    edit:focus()
+    edit:setCursorPos(#edit:getText())
+end
+
+function hideDescription()
+    if descWindow then descWindow:hide() end
+end
+
+function saveDescription()
+    if not descWindow then return end
+    local text = descWindow:getChildById('descEdit'):getText():gsub('[\r\n]+', ' ')
+    hideDescription()
+    send(function(msg) msg:addU8(5); msg:addString(text) end)
+end
+
+function hidePrice()
+    priceOffer = nil
+    if priceWindow then priceWindow:hide() end
+end
+
+function confirmPrice()
+    if not priceWindow or not priceOffer then return end
+    if priceOffer.description then
+        local text = priceWindow:getChildById('price'):getText()
+        hidePrice()
+        send(function(msg) msg:addU8(5); msg:addString(text) end)
+        return
+    end
+    hidePrice()
+end
+
+function removeAll()
+    if own.state == STATE_OPEN then return end
+    closeBoxes()
+    local yes = function()
+        closeBoxes()
+        send(function(msg) msg:addU8(4); msg:addU32(0xFFFFFFFF) end)
+    end
+    local no = function() closeBoxes() end
+    confirmBox = displayGeneralBox(tr('Remove all'), tr('Do you want to remove all items from your shop?'),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+function startOrPause()
+    ownCommitPrice()
+    if own.state == STATE_OPEN then
+        send(function(msg) msg:addU8(7) end)
+    else
+        send(function(msg) msg:addU8(6) end)
+    end
+end
+
+function addToShop(item)
+    if not item or not item:isItem() then return end
+    local pos = item:getPosition()
+    if not pos or pos.x ~= 65535 then
+        closeBoxes()
+        infoBox = displayInfoBox(tr('Shop'), tr('Sorry, not possible. Only items from your main backpack and the containers inside it can be added to the shop.'))
+        return
+    end
+    if ownWindow and not ownWindow:isVisible() then showOwn() end
+    -- preço 0 = o servidor usa o preço padrão guardado para este item (se houver)
+    send(function(msg)
+        msg:addU8(2); msg:addU16(pos.x); msg:addU16(pos.y); msg:addU8(pos.z); msg:addU32(0)
+    end)
+end
+
+-- "Idle shop": sai do jogo; com a loja aberta o servidor deixa o personagem no lugar, vendendo.
+function idleShop()
+    if own.state ~= STATE_OPEN then return end
+    closeBoxes()
+    local yes = function()
+        closeBoxes()
+        g_game.safeLogout()
+    end
+    local no = function() closeBoxes() end
+    confirmBox = displayGeneralBox(tr('Idle shop'),
+        tr('You will leave the game. Your character stays here and keeps selling until your shop time runs out or the server save.'),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+function closeShop()
+    if own.state == STATE_NONE then return end
+    closeBoxes()
+    local yes = function()
+        closeBoxes()
+        send(function(msg) msg:addU8(8) end)
+    end
+    local no = function() closeBoxes() end
+    confirmBox = displayGeneralBox(tr('Close shop'), tr('Do you want to close your shop and remove all items from it?'),
+        { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = yes } }, yes, no)
+end
+
+-- ------------------------------------------------------------------ lista (lote / vendas)
+local function showList(mode, title)
+    if not listWindow then return end
+    listMode = mode
+    listWindow:setText(title)
+    for _, id in ipairs({ 'prevButton', 'nextButton', 'pageLabel' }) do
+        listWindow:getChildById(id):setVisible(mode == 'sales')
+    end
+    listWindow:show()
+    listWindow:raise()
+    listWindow:focus()
+end
+
+function hideList()
+    listMode = nil
+    lotOf = nil
+    if listWindow then listWindow:hide() end
+end
+
+function showSales()
+    sales.page = 0
+    if listWindow then listWindow:recursiveGetChildById('rows'):destroyChildren() end
+    showList('sales', tr('Shop sales'))
+    send(function(msg) msg:addU8(14); msg:addU16(0) end)
+end
+
+function changeSalesPage(delta)
+    if listMode ~= 'sales' then return end
+    local page = math.max(0, math.min(sales.pages - 1, sales.page + delta))
+    if page == sales.page then return end
+    send(function(msg) msg:addU8(14); msg:addU16(page) end)
+end
+
+-- ------------------------------------------------------------------ plaquinha de loja
+local SHOP_ICON = '/game_playershop74/images/shop_stall'
+
+local function applyMark(id)
+    local mark = marks[id]
+    local creature = g_map.getCreatureById(id)
+    if not creature then return end
+    local open = mark and mark.open
+    local ok, err = pcall(function()
+        -- ícone de loja no lugar da skull (cliente com o setShopIconTexture)
+        if creature.setShopIconTexture then creature:setShopIconTexture(open and SHOP_ICON or '') end
+        -- nome e barra de vida em rosa enquanto a loja está aberta, como no Miracle
+        if creature.setInformationColorOverride then
+            creature:setInformationColorOverride(open and SHOP_NAME_COLOR or '#00000000')
+        end
+        creature:detachWidgetById('playerShopSign')
+        if not open then return end
+        local sign = g_ui.createWidget('PlayerShop74Sign')
+        local label = sign:getChildById('text')
+        -- sem descrição: "<nome>'s Shop", como se fosse o nome da loja
+        label:setText(mark.description ~= '' and mark.description or tr("%s's Shop", creature:getName()))
+        -- texto comprido quebra em linhas (no máximo SIGN_TEXT_W de largura) e a
+        -- tabuleta cresce para cima: a base fica sempre logo acima do nome
+        local textW = label:getTextSize().width
+        if textW > SIGN_TEXT_W then
+            label:setTextAutoResize(false)
+            label:setTextAlign(AlignCenter)
+            label:setWidth(SIGN_TEXT_W)
+            label:setTextWrap(true)
+            label:setHeight(label:getTextSize().height)
+            textW = SIGN_TEXT_W
+        end
+        local width = textW + 16
+        local height = math.max(20, label:getHeight() + 8)
+        sign:setSize({ width = width, height = height })
+        -- o ponto de fixação é o meio de cima do personagem: centraliza e sobe acima do nome
+        sign:setMarginLeft(-math.floor(width / 2))
+        sign:setMarginTop(-(SIGN_BASE + height))
+        creature:attachWidget(sign)
+        -- 10/11: logo depois do login o mapa ainda não foi desenhado e o attachWidget prende a
+        -- placa sem pai (g_client ainda sem o widget do mapa): ela existia mas não aparecia.
+        if not sign:getParent() and modules.game_interface then
+            local mapPanel = modules.game_interface.getMapPanel()
+            if mapPanel then sign:setParent(mapPanel) end
+        end
+    end)
+    if not ok then g_logger.warning('playershop74: plaquinha: ' .. tostring(err)) end
+end
+
+local ownTicks = 0
+
+-- 10/11: antes, o id saía de "pending" e ganhava "asked" ANTES de mandar. Se o pedido não
+-- saía (cliente ainda entrando no jogo) ou se perdia (limite de pedidos do servidor), a
+-- criatura só era perguntada de novo quando saía e voltava para a tela: a loja demorava a
+-- aparecer depois do login. Agora só tira da fila o que foi mandado, pergunta de novo o que
+-- ficou sem resposta e manda logo (sem esperar o ciclo de 1 s).
+local function flushMarks()
+    markFlushEvent = nil
+    if not g_game.isOnline() then return end
+    local now, nowMs = os.time(), g_clock.millis()
+    -- sem resposta depois de MARK_RETRY_MS: volta para a fila (se a criatura ainda está no mapa)
+    for id, mark in pairs(marks) do
+        if not mark.answered and mark.askedMs and nowMs - mark.askedMs >= MARK_RETRY_MS then
+            mark.askedMs = nil
+            if g_map.getCreatureById(id) then pending[id] = true end
+        end
+    end
+    local ids = {}
+    for id, _ in pairs(pending) do
+        local mark = marks[id]
+        if not mark or not mark.answered or now - (mark.asked or 0) >= MARK_ASK_EVERY then
+            if not (mark and mark.askedMs) then   -- já perguntado e esperando: não repete
+                ids[#ids + 1] = id
+                if #ids >= MARK_BATCH then break end
+            end
+        else
+            pending[id] = nil
+        end
+    end
+    if #ids == 0 then return end
+    if nowMs - markLastSend < MARK_GAP_MS then
+        -- mandou há pouco: o próximo pedido sai assim que der
+        if not markFlushEvent then markFlushEvent = scheduleEvent(flushMarks, MARK_GAP_MS - (nowMs - markLastSend)) end
+        return
+    end
+    local sent = send(function(msg)
+        msg:addU8(15); msg:addU8(#ids)
+        for _, id in ipairs(ids) do msg:addU32(id) end
+    end)
+    if not sent then return end   -- fica na fila para o próximo ciclo
+    markLastSend = nowMs
+    for _, id in ipairs(ids) do
+        pending[id] = nil
+        local mark = marks[id] or { open = false, description = '' }
+        mark.asked = now
+        mark.askedMs = nowMs
+        mark.answered = false
+        marks[id] = mark
+    end
+end
+
+local function scheduleFlush()
+    if not markFlushEvent then markFlushEvent = scheduleEvent(flushMarks, MARK_FLUSH_MS) end
+end
+
+local function askMarks()
+    -- com a janela da loja à vista, atualiza o tempo de loja uma vez por minuto
+    ownTicks = ownTicks + 1
+    if ownTicks >= 60 then
+        ownTicks = 0
+        if ownWindow and ownWindow:isVisible() and own.state == STATE_OPEN then
+            send(function(msg) msg:addU8(1); msg:addU8(OWN_VERSION) end)
+        end
+    end
+    flushMarks()
+end
+
+local function onCreatureAppear(creature)
+    if not creature or not creature:isPlayer() or creature:isLocalPlayer() then return end
+    local id = creature:getId()
+    -- mostra logo o que já se sabe e pergunta de novo (a loja pode ter fechado fora da tela)
+    if marks[id] and marks[id].open then applyMark(id) end
+    pending[id] = true
+    scheduleFlush()
+end
+
+function isShop(creature)
+    if not creature or not creature:isPlayer() then return false end
+    local mark = marks[creature:getId()]
+    return mark ~= nil and mark.open == true
+end
+
+-- ------------------------------------------------------------------ servidor
+local function onPlayerShop(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        own.state = msg:getU8()
+        own.right = msg:getU32()
+        own.tax = msg:getU8()
+        own.description = msg:getString()
+        own.offers = {}
+        for i = 1, msg:getU16() do
+            local o = {}
+            o.id = msg:getU32()
+            o.item = msg:getU16()
+            o.count = msg:getU8()
+            o.name = msg:getString()
+            o.price = msg:getU32()
+            o.lot = msg:getU8() ~= 0
+            o.lotItems = msg:getU16()
+            own.offers[i] = o
+        end
+        if msg:getUnreadSize() >= 4 then ownBank = msg:getU32() end
+        -- versão 3: quantidade de cada oferta (pilha inteira e quanto está à venda)
+        if msg:getUnreadSize() >= 2 then
+            for i = 1, msg:getU16() do
+                local total, selling = msg:getU16(), msg:getU16()
+                if own.offers[i] then own.offers[i].total, own.offers[i].selling = total, selling end
+            end
+        end
+        refreshOwn()
+    elseif sub == 2 then
+        local s = { lines = {} }
+        s.id = msg:getU32()
+        s.owner = msg:getString()
+        s.description = msg:getString()
+        for i = 1, msg:getU16() do
+            local l = {}
+            l.key = msg:getU32()
+            l.item = msg:getU16()
+            l.count = msg:getU8()
+            l.name = msg:getString()
+            l.available = msg:getU32()
+            l.price = msg:getU32()
+            local flags = msg:getU8()
+            l.lot = (flags % 2) == 1
+            l.cumulative = (math.floor(flags / 2) % 2) == 1
+            s.lines[i] = l
+        end
+        -- ouro do comprador: só quando o sub 10 foi com a versão (servidor novo)
+        local gold = msg:getUnreadSize() >= 4 and msg:getU32() or nil
+        if shop and shop.id == s.id and browseWindow and browseWindow:isVisible() then
+            shop = s
+            browseGold = gold
+            if browseWindow:recursiveGetChildById('description'):getText() == tr('Loading...') then
+                setDescription(s.description ~= '' and s.description or '')
+            end
+            refreshBrowse()
+        end
+    elseif sub == 3 then
+        local action = msg:getU8()
+        local ok = msg:getU8() ~= 0
+        local text = msg:getString()
+        if action >= 10 then
+            if browseWindow and browseWindow:isVisible() then
+                if action == 10 and not ok then
+                    -- loja fechou / longe demais: a janela fica vazia com o aviso
+                    if shop then shop.lines = {} end
+                    browseSel = nil
+                    refreshBrowse()
+                    fillContent(nil)
+                    setDescription(text)
+                elseif text ~= '' then
+                    closeBoxes()
+                    infoBox = displayInfoBox(ok and tr('Shop') or tr('Sorry'), text)
+                end
+            end
+        elseif ownWindow and ownWindow:isVisible() then
+            -- erro: caixa; acerto: na descrição (ex.: "Your shop is open...")
+            if not ok and text ~= '' then
+                closeBoxes()
+                infoBox = displayInfoBox(tr('Shop'), text)
+            elseif text ~= '' then
+                ownSetDescription(text)
+            end
+        elseif not ok and text ~= '' then
+            closeBoxes()
+            infoBox = displayInfoBox(tr('Shop'), text)
+        end
+    elseif sub == 4 then
+        local id = msg:getU32()
+        local key = msg:getU32()
+        local items = {}
+        for i = 1, msg:getU8() do
+            local it = {}
+            it.item = msg:getU16()
+            it.count = msg:getU8()
+            it.name = msg:getString()
+            items[i] = it
+        end
+        local me = g_game.getLocalPlayer()
+        if me and id == me:getId() then
+            if ownWindow and ownWindow:isVisible() and key == ownSel then
+                local grid = ownWindow:recursiveGetChildById('ownContent')
+                grid:destroyChildren()
+                for i, it in ipairs(items) do
+                    local slot = g_ui.createWidget('PlayerShop74Slot', grid)
+                    setSlot(slot, it.item, it.count, it.count)
+                    onSlotClick(slot, function() if ownSel then ownAskLook(ownSel, i) end end)
+                end
+                ownWindow:getChildById('ownContentLabel'):setText(tr('Container items (%d)', #items))
+            end
+        elseif browseWindow and browseWindow:isVisible() and shop and shop.id == id and key == browseSel then
+            fillContent(items)
+        end
+    elseif sub == 5 then
+        local page = msg:getU16()
+        local pages = msg:getU16()
+        local rowsData = {}
+        for i = 1, msg:getU8() do
+            local e = {}
+            e.time = msg:getU32()
+            e.buyer = msg:getString()
+            e.item = msg:getString()
+            e.amount = msg:getU32()
+            e.total = msg:getU32()
+            e.tax = msg:getU32()
+            e.net = msg:getU32()
+            rowsData[i] = e
+        end
+        if listWindow and listMode == 'sales' then
+            sales.page, sales.pages = page, math.max(1, pages)
+            local rows = listWindow:recursiveGetChildById('rows')
+            rows:destroyChildren()
+            for _, e in ipairs(rowsData) do
+                local row = g_ui.createWidget('PlayerShop74SaleRow', rows)
+                row:getChildById('date'):setText(os.date('%Y-%m-%d %H:%M', e.time))
+                row:getChildById('text'):setText(string.format('%s: %dx %s', e.buyer, e.amount, e.item))
+                row:getChildById('net'):setText('+' .. formatGold(e.net) .. ' gp')
+                row:setTooltip(tr('Sold for %s gold, fee %s gold.', formatGold(e.total), formatGold(e.tax)))
+            end
+            listWindow:getChildById('pageLabel'):setText(string.format('%d/%d', sales.page + 1, sales.pages))
+            listWindow:getChildById('prevButton'):setEnabled(sales.page > 0)
+            listWindow:getChildById('nextButton'):setEnabled(sales.page + 1 < sales.pages)
+        end
+    elseif sub == 19 then
+        -- versão 4: moldura de atributos e tempo/cargas de cada casa (1 = própria loja,
+        -- 2 = loja de outro jogador, pela chave da linha)
+        local where, ownerId = msg:getU8(), msg:getU32()
+        local list = {}
+        for i = 1, msg:getU16() do
+            list[msg:getU32()] = { attr = msg:getU8(), kind = msg:getU8(), value = msg:getU32() }
+        end
+        if where == 1 then
+            ownExtras = list
+            if ownWindow then
+                for _, slot in ipairs(ownWindow:recursiveGetChildById('offers'):getChildren()) do
+                    if slot.offer then applyExtras(slot, ownExtras[slot.offer.id]) end
+                end
+                if ownSel then applyExtras(ownWindow:recursiveGetChildById('ownPreview'), ownExtras[ownSel]) end
+            end
+        elseif where == 2 and shop and shop.id == ownerId then
+            browseExtras = list
+            if browseWindow then
+                for _, slot in ipairs(browseWindow:recursiveGetChildById('items'):getChildren()) do
+                    if slot.line then applyExtras(slot, browseExtras[slot.line.key]) end
+                end
+            end
+        end
+    elseif sub == 6 then
+        for i = 1, msg:getU8() do
+            local id = msg:getU32()
+            local open = msg:getU8() ~= 0
+            local description = msg:getString()
+            local old = marks[id]
+            marks[id] = { open = open, description = description, asked = old and old.asked or os.time(), answered = true }
+            applyMark(id)
+            if not open and shop and shop.id == id and browseWindow and browseWindow:isVisible() then
+                setDescription(tr('This shop is closed.'))
+            end
+        end
+    end
+end
+
+-- ------------------------------------------------------------------ menu de contexto
+local function isMainBackpackItem(thing)
+    if not thing or not thing:isItem() then return false end
+    local pos = thing:getPosition()
+    -- dentro de um container aberto (64..79); o servidor confere se é a mochila principal
+    return pos ~= nil and pos.x == 65535 and pos.y >= 64
+end
+
+local function addHooks()
+    local gi = modules.game_interface
+    if not gi or not gi.addMenuHook then return end
+    gi.addMenuHook('playershop74', tr('Open Shop'),
+        function() showOwn() end,
+        function(menuPosition, lookThing, useThing, creatureThing)
+            return creatureThing ~= nil and creatureThing:isLocalPlayer()
+        end)
+    -- a loja dos outros abre pelo "Open Shop" que o game_interface põe logo depois do Follow
+    gi.addMenuHook('playershop74', tr('Add to shop'),
+        function(menuPosition, lookThing, useThing, creatureThing) addToShop(useThing or lookThing) end,
+        function(menuPosition, lookThing, useThing, creatureThing)
+            return creatureThing == nil and own.right > 0 and own.state ~= STATE_OPEN
+                and isMainBackpackItem(useThing or lookThing)
+        end)
+end
+
+local function removeHooks()
+    local gi = modules.game_interface
+    if gi and gi.removeMenuHook then gi.removeMenuHook('playershop74') end
+end
+
+-- ------------------------------------------------------------------ jogo
+local function onGameStart()
+    -- (marks/pending já foram limpos no onGameEnd; limpar aqui perdia as criaturas que
+    -- aparecem enquanto o jogo começa)
+    own = { state = STATE_NONE, right = 0, tax = 0, description = '', offers = {} }
+    -- pede o estado: diz se o personagem tem direito de loja (menu "Add to shop") e,
+    -- quando o dono volta para o personagem que ficou vendendo, traz a loja pausada
+    -- (11/11: 300 ms; o primeiro 0xEF também faz o servidor mandar as marcas das lojas à vista)
+    -- 11/11 (queda da 121): manda SEMPRE a versão. Sem ela, depois de um relog o servidor
+    -- respondia no formato antigo (sem saldo e quantidades) e a leitura "se ainda houver
+    -- bytes" pegava a mensagem seguinte do mesmo pacote: leitura além do fim e queda
+    scheduleEvent(function() send(function(msg) msg:addU8(1); msg:addU8(OWN_VERSION) end) end, 300)
+end
+
+local function onGameEnd()
+    closeBoxes()
+    hideList()
+    hideBrowse()
+    hideOwn()
+    marks, pending = {}, {}
+end
+
+function init()
+    ownWindow = g_ui.displayUI('playershop74')
+    ownWindow:hide()
+    browseWindow = g_ui.displayUI('playershopbrowse74')
+    browseWindow:hide()
+    listWindow = g_ui.displayUI('playershoplist74')
+    listWindow:hide()
+    priceWindow = g_ui.displayUI('playershopprice74')
+    priceWindow:hide()
+    descWindow = g_ui.displayUI('playershopdesc74')
+    descWindow:hide()
+
+    -- arrastar um item para a janela da loja = "Add to shop"
+    ownWindow.onDrop = function(self, widget, mousePos)
+        if not widget or not widget.currentDragThing then return false end
+        addToShop(widget.currentDragThing)
+        return true
+    end
+    browseWindow:recursiveGetChildById('amountScroll').onValueChange = function() updateInfo() end
+    local ownPrice = ownWindow:recursiveGetChildById('ownPrice')
+    ownPrice.onKeyPress = function(self, keyCode)
+        if keyCode == KeyEnter or keyCode == KeyReturn then ownCommitPrice(); return true end
+        return false
+    end
+    ownPrice.onFocusChange = function(self, focused) if not focused then ownCommitPrice() end end
+    ownWindow:recursiveGetChildById('ownAmountScroll').onValueChange = function(self, value) ownAmountChanged(value) end
+    browseWindow:getChildById('search').onTextChange = function() refreshBrowse() end
+
+    ProtocolGame.registerOpcode(OPCODE, onPlayerShop)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd, onTextMessage = onLookText })
+    connect(Creature, { onAppear = onCreatureAppear })
+    addHooks()
+    markEvent = cycleEvent(askMarks, 1000)
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    if markEvent then removeEvent(markEvent); markEvent = nil end
+    if markFlushEvent then removeEvent(markFlushEvent); markFlushEvent = nil end
+    removeHooks()
+    disconnect(Creature, { onAppear = onCreatureAppear })
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd, onTextMessage = onLookText })
+    ProtocolGame.unregisterOpcode(OPCODE)
+    closeBoxes()
+    for _, w in ipairs({ descWindow, priceWindow, listWindow, browseWindow, ownWindow }) do
+        if w then w:destroy() end
+    end
+    descWindow, priceWindow, listWindow, browseWindow, ownWindow = nil, nil, nil, nil, nil
+end

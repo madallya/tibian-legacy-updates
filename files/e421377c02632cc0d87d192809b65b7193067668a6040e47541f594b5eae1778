@@ -1,0 +1,12 @@
+Module
+  name: client_options74
+  description: Janela de opções no estilo do cliente do Miracle (Game, Interface, Console, Graphics, Media)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  autoload: true
+  autoload-priority: 1001
+  dependencies: [ client_options ]
+  scripts: [ features74, options74 ]
+  @onLoad: init()
+  @onUnload: terminate()

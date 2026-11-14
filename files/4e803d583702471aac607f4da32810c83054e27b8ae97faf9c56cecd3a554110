@@ -1,0 +1,248 @@
+// Estilos do Hunt Analyzer (Exp/Loot/Kills Statistics e Set items prices),
+// no estilo do cliente do Miracle.
+
+// Janela da coluna (move entre os painéis, trava, minimiza e fecha como as outras)
+Hunt74StatMiniWindow < MiniWindow
+  height: 120
+  &save: true
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/options/analyzers
+    image-clip: 0 0 20 20
+    size: 12 12
+    image-smooth: true
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    color: #9d9d9dff
+
+// "Exp/h:            524k"
+Hunt74StatRow < UIWidget
+  height: 14
+  phantom: true
+
+  Label
+    id: label
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-auto-resize: true
+    phantom: true
+
+  Label
+    id: value
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+    phantom: true
+
+// "Supply:        89,183 (moeda)"
+Hunt74GoldRow < UIWidget
+  height: 14
+  phantom: true
+
+  Label
+    id: label
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-auto-resize: true
+    phantom: true
+
+  UIWidget
+    id: coin
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    // 1 px abaixo do centro, como no Miracle
+    margin-top: 1
+    size: 9 9
+    image-source: /images/game/cyclopedia/icons/icon-goldcoin
+    phantom: true
+
+  Label
+    id: value
+    anchors.right: coin.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 3
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-auto-resize: true
+    phantom: true
+
+Hunt74Separator < HorizontalSeparator
+  height: 2
+  margin-top: 4
+  margin-bottom: 4
+  phantom: true
+
+Hunt74Caption < Label
+  height: 14
+  font: verdana-11px-antialised
+  color: #c0c0c0
+  phantom: true
+
+// grade de itens (Looted items / Supplies used)
+Hunt74ItemGrid < UIWidget
+  phantom: true
+  layout:
+    type: grid
+    cell-size: 34 34
+    cell-spacing: 1
+    flow: true
+    fit-children: true
+
+// sem o quadrado de fundo do slot (como no Miracle)
+Hunt74ItemCell < Item
+  size: 34 34
+  virtual: true
+  phantom: false
+  image-source: none
+
+  Label
+    id: count
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    margin-right: 1
+    margin-bottom: 1
+    font: tibia-outlined
+    color: #e7e7e7
+    text-auto-resize: true
+    phantom: true
+
+// criatura com nome e "Kills: N"
+Hunt74KillRow < UIWidget
+  height: 36
+  phantom: true
+
+  Creature
+    id: creature
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    size: 34 34
+    phantom: true
+
+  Label
+    id: name
+    anchors.top: parent.top
+    anchors.left: creature.right
+    margin-left: 4
+    margin-top: 3
+    height: 14
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    text-auto-resize: true
+    phantom: true
+
+  // elite creatures: estrelas (1 a 3) depois do nome
+  UIWidget
+    id: stars
+    anchors.verticalCenter: name.verticalCenter
+    anchors.left: name.right
+    margin-left: 4
+    size: 9 10
+    image-source: /game_elite74/images/stars_card1
+    visible: false
+
+  Label
+    id: kills
+    anchors.top: name.bottom
+    anchors.left: creature.right
+    anchors.right: parent.right
+    margin-left: 4
+    height: 14
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-wrap: false
+    phantom: true
+
+Hunt74EmptyLabel < Label
+  font: verdana-11px-antialised
+  color: #9d9d9d
+  text-wrap: true
+  text-auto-resize: true
+  phantom: true
+
+// Set items prices -------------------------------------------------------------
+// Campo de valor como no Miracle: fundo escuro só no campo, texto à esquerda e
+// a moeda dentro do campo, à direita.
+Hunt74PriceField < TextEdit
+  width: 100
+  height: 20
+  text-align: left
+  padding-left: 5
+  padding-right: 18
+  max-length: 10
+  font: verdana-11px-antialised
+  color: #dfdfdf
+
+  UIWidget
+    id: coin
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 6
+    size: 9 9
+    image-source: /images/game/cyclopedia/icons/icon-goldcoin
+    phantom: true
+
+Hunt74PriceRow < UIWidget
+  height: 40
+
+  HorizontalSeparator
+    id: separator
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+
+  // um quadrado só (o estilo Item já desenha a borda do slot)
+  Item
+    id: item
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 3
+    margin-top: 1
+    virtual: true
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: item.right
+    anchors.right: lootValue.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 6
+    margin-right: 6
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    phantom: true
+
+  Hunt74PriceField
+    id: lootValue
+    anchors.right: useValue.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 22
+    editable: false
+    focusable: false
+
+  Hunt74PriceField
+    id: useValue
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 8

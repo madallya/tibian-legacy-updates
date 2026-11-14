@@ -1,0 +1,10 @@
+Module
+  name: game_questlog74
+  description: Quest Log e Quest Tracker no estilo do cliente do Miracle (lista vinda do servidor, comando 0xE4)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ questlog74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

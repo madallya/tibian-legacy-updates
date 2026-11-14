@@ -1,0 +1,176 @@
+// OTServ 7.4: janela "Enter Game" no estilo do cliente do Miracle.
+// Os campos que o entergame.lua usa e que não aparecem aqui ficam escondidos
+// (servidor, porta, versão...), porque o cliente só conecta no nosso servidor.
+
+EnterGameWindow < MainWindow
+  !text: tr('Enter Game')
+  size: 257 208
+
+EnterGameButton < Button
+  width: 64
+
+ServerListButton < UIButton
+  size: 0 0
+  visible: false
+
+HiddenField < UIWidget
+  size: 0 0
+  visible: false
+  phantom: true
+
+EnterGameWindow
+  id: enterGame
+  &authenticatorEnabled: false
+  &authenticatorHeight: 44
+  &stayLoggedBoxEnabled: false
+  &stayLoggedBoxHeight: 24
+  size: 257 208
+  padding: 25 14 12 14
+  @onEnter: EnterGame.doLogin()
+
+  Label
+    id: emailLabel
+    !text: tr('Email')
+    anchors.left: parent.left
+    anchors.top: parent.top
+    text-auto-resize: true
+
+  TextEdit
+    id: accountNameTextEdit
+    height: 21
+    text-offset: 1 2
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: emailLabel.bottom
+    margin-top: 3
+
+  Label
+    id: passwordLabel
+    !text: tr('Password')
+    anchors.left: parent.left
+    anchors.top: accountNameTextEdit.bottom
+    margin-top: 9
+    text-auto-resize: true
+
+  PasswordTextEdit
+    id: accountPasswordTextEdit
+    height: 21
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: passwordLabel.bottom
+    margin-top: 1
+
+  HorizontalSeparator
+    id: topSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: accountPasswordTextEdit.bottom
+    margin-top: 9
+
+  CheckBox
+    id: rememberEmailBox
+    !text: tr('Remember password')
+    !tooltip: tr('Remember account and password when starts client')
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: topSeparator.bottom
+    margin-top: 10
+
+  CheckBox
+    id: watchCamsBox
+    !text: tr('Watch Cams')
+    !tooltip: tr('Log in to watch the recordings saved by the server')
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: rememberEmailBox.bottom
+    margin-top: 9
+
+  HorizontalSeparator
+    id: bottomSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: watchCamsBox.bottom
+    margin-top: 8
+
+  Button
+    id: loginButton
+    !text: tr('Login')
+    width: 104
+    anchors.left: parent.left
+    anchors.top: bottomSeparator.bottom
+    margin-top: 9
+    @onClick: EnterGame.doLogin()
+
+  Button
+    id: localCamsButton
+    !text: tr('Local Cams')
+    width: 104
+    anchors.right: parent.right
+    anchors.top: bottomSeparator.bottom
+    margin-top: 9
+    @onClick: modules.client_classic74.showCams()
+
+  // ---- campos usados pelo entergame.lua, escondidos -------------------------
+  UIWidget
+    id: rememberEmailTip
+    size: 0 0
+    visible: false
+    $on:
+      visible: false
+
+  HiddenField
+    id: Forgot_password_email
+
+  CheckBox
+    id: stayLoggedBox
+    size: 0 0
+    visible: false
+    $on:
+      visible: false
+
+  HiddenField
+    id: serverLabel
+
+  ServerListButton
+    id: serverListButton
+
+  TextEdit
+    id: serverHostTextEdit
+    size: 0 0
+    visible: false
+
+  HiddenField
+    id: clientLabel
+
+  ComboBox
+    id: clientComboBox
+    size: 0 0
+    visible: false
+
+  HiddenField
+    id: portLabel
+
+  TextEdit
+    id: serverPortTextEdit
+    text: 7171
+    size: 0 0
+    visible: false
+
+  CheckBox
+    id: autoLoginBox
+    enabled: false
+    size: 0 0
+    visible: false
+
+  CheckBox
+    id: httpLoginBox
+    size: 0 0
+    visible: false
+
+  HiddenField
+    id: btnCreateNewAccount
+
+  Label
+    id: serverInfoLabel
+    size: 0 0
+    visible: false

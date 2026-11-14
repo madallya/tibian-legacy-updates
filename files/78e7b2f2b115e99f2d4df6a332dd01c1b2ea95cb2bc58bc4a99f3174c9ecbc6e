@@ -1,0 +1,654 @@
+// Store do Telmora no layout da Shop do Miracle: categorias à esquerda, ofertas
+// no meio, detalhe à direita e, embaixo, saldo, gift, histórico e fechar.
+//
+// Fundos medidos no print do Miracle (09/11): janela e cartões = textura da
+// janela (#454545); colunas de lista = a mesma textura mais escura (#383838,
+// bg_dark); caixas de preço/saldo = #2a2a2a liso; descrição = #363636 liso.
+// As molduras são imagens com o miolo transparente por cima da textura
+// (a textura não pode ser esticada, por isso não vai na mesma imagem).
+
+Store74Text < Label
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  phantom: true
+
+// coluna de lista: textura escura + moldura
+Store74Column < UIWidget
+  image-source: /game_store74/images/bg_dark
+  image-repeated: true
+  phantom: true
+
+  UIWidget
+    id: frame
+    anchors.fill: parent
+    image-source: /game_store74/images/frame_column
+    image-border: 2
+    phantom: true
+
+// painel na textura da janela, só com a moldura
+Store74Panel < UIWidget
+  image-source: /game_store74/images/frame_column
+  image-border: 2
+  phantom: true
+
+// área escura da lista de ofertas, dentro do painel, com um sulco em volta (Miracle)
+Store74List < UIWidget
+  image-source: /game_store74/images/bg_dark
+  image-repeated: true
+  phantom: true
+
+  UIWidget
+    id: frame
+    anchors.fill: parent
+    image-source: /game_store74/images/frame_groove
+    image-border: 2
+    phantom: true
+
+// caixa lisa escura (preço, saldo)
+Store74Flat < UIWidget
+  image-source: /game_store74/images/box_dark
+  image-border: 2
+  phantom: true
+
+// quadro da imagem da oferta
+Store74ImageBox < UIWidget
+  image-source: /game_store74/images/box_image
+  image-border: 1
+  phantom: true
+
+// (as linhas de lista não têm âncoras: quem dá a largura é o verticalBox do pai)
+
+// Telmora Coin pequena (11/11): folha de 12x12 por quadro, 0 parada e 1..12 com o
+// brilho passando; o store74.lua troca o quadro junto com o Buy Now!
+Store74Coin < UIWidget
+  size: 12 12
+  image-source: /game_store74/images/coin_small
+  image-clip: 0 0 12 12
+  phantom: true
+
+// Telmora Coin das ofertas (11/11): folha de 32x32 por quadro, 0 parada e 1..12 com o
+// brilho, no mesmo passo das outras moedas da Store (o item do .dat anda a 500 ms por
+// quadro). Criada pelo store74.lua por cima do item; a quantidade imita a do item.
+Store74CoinBig < UIWidget
+  image-source: /game_store74/images/coin
+  image-clip: 0 0 32 32
+  phantom: true
+
+  UIWidget
+    id: count
+    anchors.fill: parent
+    font: verdana-10px-rounded
+    color: #e7e7e7
+    text-align: bottomRight
+    text-offset: -3 1
+    phantom: true
+
+// caixa do preço: valor centrado e a moeda à direita
+Store74Price < Store74Flat
+  size: 100 20
+
+  Store74Text
+    id: value
+    anchors.left: parent.left
+    anchors.right: coin.left
+    anchors.verticalCenter: parent.verticalCenter
+    text-align: center
+
+  Store74Coin
+    id: coin
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 5
+
+// botão de categoria: textura da janela + moldura em relevo (afundada quando
+// escolhida, trocada pelo store74.lua), ícone e nome alinhados à esquerda
+Store74Category < UIWidget
+  height: 26
+  image-source: /images/ui/background
+  image-repeated: true
+
+  UIWidget
+    id: frame
+    anchors.fill: parent
+    image-source: /game_store74/images/frame_button
+    image-border: 2
+    phantom: true
+
+  UIWidget
+    id: icon
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 7
+    size: 22 22
+    phantom: true
+
+  Item
+    id: item
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 7
+    size: 22 22
+    padding: 0
+    virtual: true
+    phantom: true
+    image-source: none
+    visible: false
+
+  Store74Text
+    id: name
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 40
+    margin-right: 4
+    text-align: left
+    text-wrap: false
+    color: #ffffff
+
+// cartão de oferta: textura da janela + moldura (branca quando escolhido)
+Store74Offer < UIWidget
+  height: 80
+  image-source: /images/ui/background
+  image-repeated: true
+
+  UIWidget
+    id: frame
+    anchors.fill: parent
+    image-source: /game_store74/images/frame_card
+    image-border: 2
+    phantom: true
+
+  Store74ImageBox
+    id: imageBox
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 8
+    size: 70 70
+
+    UIWidget
+      id: icon
+      anchors.centerIn: parent
+      size: 64 64
+      phantom: true
+
+    Item
+      id: item
+      anchors.centerIn: parent
+      size: 32 32
+      padding: 0
+      virtual: true
+      phantom: true
+      image-source: none
+      visible: false
+
+    // 11/11: ofertas de Outfits (icone "outfit:homem:mulher:addons")
+    UICreature
+      id: creature
+      anchors.centerIn: parent
+      size: 64 64
+      phantom: true
+      visible: false
+
+  Store74Text
+    id: name
+    anchors.top: parent.top
+    anchors.left: imageBox.right
+    anchors.right: parent.right
+    margin-top: 8
+    margin-left: 6
+    margin-right: 8
+    height: 30
+    text-align: top
+    text-wrap: true
+    color: #ffffff
+
+  Store74Price
+    id: price
+    anchors.bottom: parent.bottom
+    anchors.right: parent.right
+    margin-bottom: 9
+    margin-right: 9
+
+Store74HistoryRow < UIWidget
+  height: 17
+  phantom: true
+
+  Store74Text
+    id: date
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 6
+    width: 132
+
+  Store74Text
+    id: delta
+    anchors.left: date.right
+    anchors.verticalCenter: parent.verticalCenter
+    width: 70
+    text-align: right
+
+  Store74Coin
+    id: coin
+    anchors.left: delta.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 4
+
+  Store74Text
+    id: description
+    anchors.left: coin.right
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 10
+    text-wrap: false
+
+MainWindow
+  id: store74Window
+  !text: tr('Store')
+  size: 806 542
+  visible: false
+  @onEscape: modules.game_store74.hide()
+
+  // ---------------------------------------------------------------- categorias
+  Store74Column
+    id: categoriesBox
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.bottom: bottomSeparator.top
+    margin-bottom: 8
+    width: 200
+
+  Panel
+    id: categories
+    anchors.fill: categoriesBox
+    margin: 9 9 9 9
+    layout:
+      type: verticalBox
+      spacing: 5
+
+  // ---------------------------------------------------------------- ofertas
+  // como no Miracle: painel na textura da janela, a lista escura com um sulco em volta
+  // e a barra de rolagem fora do sulco, na textura
+  Store74Panel
+    id: offersBox
+    anchors.top: parent.top
+    anchors.left: categoriesBox.right
+    anchors.bottom: bottomSeparator.top
+    margin-left: 8
+    margin-bottom: 8
+    width: 270
+
+  Store74List
+    id: offersList
+    anchors.fill: offersBox
+    margin: 8 24 8 8
+
+  ScrollablePanel
+    id: offers
+    anchors.fill: offersList
+    margin: 7 7 7 7
+    vertical-scrollbar: offersScroll
+    layout:
+      type: verticalBox
+      spacing: 5
+
+  VerticalScrollBar
+    id: offersScroll
+    anchors.top: offersList.top
+    anchors.bottom: offersList.bottom
+    anchors.left: offersList.right
+    margin-left: 2
+    width: 12
+    step: 28
+    pixels-scroll: true
+
+  // ---------------------------------------------------------------- detalhe
+  Store74Panel
+    id: detailBox
+    anchors.top: parent.top
+    anchors.left: offersBox.right
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-left: 8
+    margin-bottom: 8
+
+  Store74Text
+    id: detailName
+    anchors.top: detailBox.top
+    anchors.left: detailBox.left
+    anchors.right: detailBox.right
+    margin-top: 12
+    text-align: center
+    color: #ffffff
+
+  Store74ImageBox
+    id: detailImageBox
+    anchors.top: detailName.bottom
+    anchors.left: detailBox.left
+    margin-top: 14
+    margin-left: 12
+    size: 100 100
+
+    UIWidget
+      id: detailIcon
+      anchors.centerIn: parent
+      size: 64 64
+      phantom: true
+
+    Item
+      id: detailItem
+      anchors.centerIn: parent
+      // Miracle: o item no tamanho dele (32), sem ampliar
+      size: 32 32
+      padding: 0
+      virtual: true
+      phantom: true
+      image-source: none
+      visible: false
+
+    // 11/11 Outfits (como no Miracle): o boneco no tamanho dele, andar (verde = andando),
+    // trocar o sexo e girar
+    UICreature
+      id: detailCreature
+      anchors.centerIn: parent
+      size: 64 64
+      phantom: true
+      visible: false
+
+    UIButton
+      id: previewWalk
+      anchors.top: parent.top
+      anchors.left: parent.left
+      margin: 3 0 0 3
+      size: 19 19
+      image-source: /game_store74/images/walk_on
+      visible: false
+      @onClick: modules.game_store74.togglePreviewWalk()
+
+    UIButton
+      id: previewSex
+      anchors.top: parent.top
+      anchors.right: parent.right
+      margin: 3 3 0 0
+      size: 19 19
+      image-source: /game_store74/images/sex_f
+      visible: false
+      @onClick: modules.game_store74.togglePreviewSex()
+
+    UIButton
+      id: previewLeft
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      margin: 0 0 3 3
+      size: 16 16
+      image-source: /game_store74/images/turn_left
+      visible: false
+      $pressed:
+        opacity: 0.7
+      @onClick: modules.game_store74.turnPreview(1)
+
+    UIButton
+      id: previewRight
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 0 3 3 0
+      size: 16 16
+      image-source: /game_store74/images/turn_right
+      visible: false
+      $pressed:
+        opacity: 0.7
+      @onClick: modules.game_store74.turnPreview(-1)
+
+  // 11/11 Outfits: "Show addon 1/2" (caixa afundada com o check dentro, como no Miracle)
+  UIWidget
+    id: addon1Box
+    anchors.top: detailImageBox.top
+    anchors.left: buyButton.left
+    anchors.right: buyButton.right
+    height: 21
+    image-source: /game_store74/images/box_image
+    image-border: 1
+    visible: false
+
+    CheckBox
+      id: addon1
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-left: 5
+      !text: tr('Show addon 1')
+      color: #ffffff
+      checked: true
+      @onCheckChange: modules.game_store74.onPreviewAddon()
+
+  UIWidget
+    id: addon2Box
+    anchors.top: addon1Box.bottom
+    anchors.left: buyButton.left
+    anchors.right: buyButton.right
+    margin-top: 7
+    height: 21
+    image-source: /game_store74/images/box_image
+    image-border: 1
+    visible: false
+
+    CheckBox
+      id: addon2
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-left: 5
+      !text: tr('Show addon 2')
+      color: #ffffff
+      checked: true
+      @onCheckChange: modules.game_store74.onPreviewAddon()
+
+  // barra de ouro como o botão Store ("Buy Now!" gravado na imagem; o brilho é
+  // animado pelo store74.lua enquanto a janela está aberta)
+  UIButton
+    id: buyButton
+    anchors.top: detailImageBox.top
+    anchors.right: detailBox.right
+    margin-top: 28
+    margin-right: 12
+    size: 122 22
+    image-source: /game_store74/images/buy_gold
+    image-clip: 0 0 122 22
+    enabled: false
+    opacity: 0.45
+    $!disabled:
+      opacity: 1.0
+    $disabled:
+      opacity: 0.45
+    $pressed:
+      opacity: 0.75
+    @onClick: modules.game_store74.buySelected()
+
+  Store74Price
+    id: detailPrice
+    anchors.top: buyButton.bottom
+    anchors.left: buyButton.left
+    anchors.right: buyButton.right
+    margin-top: 6
+
+  UIWidget
+    id: descriptionBox
+    anchors.top: detailImageBox.bottom
+    anchors.left: detailBox.left
+    anchors.right: detailBox.right
+    anchors.bottom: detailBox.bottom
+    margin: 14 12 12 12
+    image-source: /game_store74/images/box_desc
+    image-border: 1
+    phantom: true
+
+  Store74Text
+    id: detailDescription
+    anchors.fill: descriptionBox
+    margin: 8 10 8 10
+    text-wrap: true
+    text-align: topLeft
+
+  // ---------------------------------------------------------------- histórico
+  UIWidget
+    id: historyBox
+    anchors.top: parent.top
+    anchors.left: categoriesBox.right
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-left: 8
+    margin-bottom: 8
+    image-source: /game_store74/images/box_desc
+    image-border: 1
+    visible: false
+
+    UIWidget
+      id: historyHeader
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin: 2 2 0 2
+      height: 18
+      background-color: #2a2a2a
+      phantom: true
+
+      Store74Text
+        !text: tr('Date')
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        margin-left: 6
+        width: 132
+
+      Store74Text
+        id: balanceTitle
+        !text: tr('Balance')
+        anchors.left: prev.right
+        anchors.verticalCenter: parent.verticalCenter
+        width: 70
+        text-align: right
+
+      Store74Text
+        !text: tr('Description')
+        anchors.left: prev.right
+        anchors.verticalCenter: parent.verticalCenter
+        margin-left: 26
+        text-auto-resize: true
+
+    Panel
+      id: historyRows
+      anchors.top: historyHeader.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: historyPage.top
+      margin: 2 2 4 2
+      layout:
+        type: verticalBox
+
+    Store74Text
+      id: historyEmpty
+      !text: tr('No transactions yet.')
+      anchors.centerIn: historyRows
+      color: #9d9d9d
+      text-auto-resize: true
+      visible: false
+
+    Store74Text
+      id: historyPage
+      anchors.bottom: parent.bottom
+      anchors.horizontalCenter: parent.horizontalCenter
+      margin-bottom: 8
+      width: 60
+      text-align: center
+      text: 1/1
+
+    Button
+      id: historyPrev
+      text: <
+      anchors.verticalCenter: historyPage.verticalCenter
+      anchors.right: historyPage.left
+      size: 22 20
+      @onClick: modules.game_store74.changeHistoryPage(-1)
+
+    Button
+      id: historyNext
+      text: >
+      anchors.verticalCenter: historyPage.verticalCenter
+      anchors.left: historyPage.right
+      size: 22 20
+      @onClick: modules.game_store74.changeHistoryPage(1)
+
+  // ---------------------------------------------------------------- rodapé
+  HorizontalSeparator
+    id: bottomSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 8
+
+  Store74Flat
+    id: balanceBox
+    anchors.left: parent.left
+    anchors.verticalCenter: closeButton.verticalCenter
+    size: 150 22
+
+    Store74Coin
+      id: balanceCoin
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-left: 6
+
+    Store74Text
+      id: balanceLabel
+      anchors.left: balanceCoin.right
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-left: 6
+      text-wrap: false
+
+  Button
+    id: giftButton
+    anchors.left: balanceBox.right
+    anchors.verticalCenter: closeButton.verticalCenter
+    margin-left: 8
+    size: 46 22
+    !tooltip: tr('Gift Telmora Points')
+    @onClick: modules.game_store74.showGift()
+
+    UIWidget
+      anchors.centerIn: parent
+      size: 30 12
+      image-source: /game_store74/images/gift
+      phantom: true
+
+      Store74Coin
+        id: giftCoin
+        anchors.left: parent.left
+        anchors.top: parent.top
+
+  Store74Text
+    id: statusLabel
+    anchors.left: giftButton.right
+    anchors.right: historyButton.left
+    anchors.verticalCenter: closeButton.verticalCenter
+    margin-left: 10
+    margin-right: 8
+    color: #9d9d9d
+    text-wrap: false
+
+  Button
+    id: historyButton
+    !text: tr('History')
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 8
+    size: 70 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_store74.toggleHistory()
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 70 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_store74.hide()

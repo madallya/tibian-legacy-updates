@@ -1,0 +1,270 @@
+-- Tempo dos anéis e itens de luz e cargas dos amuletos (OTServ 7.4 / Telmora),
+-- como no cliente do Miracle: embaixo do item aparece "1h", "14m", "2:56" (anel,
+-- tocha, light wand) ou "5" (cargas do stone skin amulet).
+--
+-- O protocolo 7.4 não manda tempo nem cargas, e o cliente só conhece o item pela
+-- posição. Logo depois do pacote que manda o item, o servidor manda o comando
+-- 0xF6 (src/game/itemclock.hh):
+--   1 inventário  S->C: u8 slot, u8 tipo, u32 valor
+--   2 container   S->C: u8 container, u8 quantidade, (u8 índice, u8 tipo, u32 valor)...
+-- tipo: 0 nada, 1 tempo parado (s), 2 tempo correndo (s; conta aqui), 3 cargas.
+-- O valor fica no próprio item (item.clock74Kind/Value/At), então acompanha o
+-- item quando o container muda de ordem; item novo nasce sem valor.
+--
+-- SÓ MOSTRA. O cliente nunca manda tempo nem cargas ao servidor (o único pacote
+-- é o hello, C->S sub 1 + versão) e o servidor nunca muda um item por causa
+-- deste módulo: não há como gerar item infinito por aqui.
+--
+-- Formato (o mesmo do Miracle): 1 hora ou mais "Nh"; de 10 min a 1 h "Nm";
+-- menos de 10 min "m:ss". Minutos e horas arredondados para cima, iguais ao look
+-- (1h01 restando = "2h", 14:30 = "15m"). Cargas: o número.
+
+local OPCODE = 0xF6
+local VERSION = 1
+
+local KIND_NONE, KIND_PAUSED, KIND_RUNNING, KIND_CHARGES = 0, 1, 2, 3
+
+-- campos do painel do inventário (modules/game_inventory: ui.<nome>.item)
+local INVENTORY_SLOTS = { 'helmet', 'amulet', 'backpack', 'armor', 'shield', 'sword', 'legs', 'boots', 'ring', 'tools' }
+
+local tickEvent
+local pendingRefresh
+
+local function isSpectating()
+    local livecam = modules.game_livecam74
+    if livecam and livecam.isSpectating and livecam.isSpectating() then return true end
+    local classic = modules.client_classic74
+    return classic and classic.isPlayingCam and classic.isPlayingCam() or false
+end
+
+local function sendHello()
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() or isSpectating() then return end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    msg:addU8(1)
+    msg:addU8(VERSION)
+    protocol:send(msg)
+end
+
+-- segundos que faltam agora (nil = item sem relógio)
+local function secondsLeft(item)
+    local kind = item and tonumber(item.clock74Kind) or KIND_NONE
+    if kind ~= KIND_PAUSED and kind ~= KIND_RUNNING then return nil end
+    local value = tonumber(item.clock74Value) or 0
+    if kind == KIND_RUNNING then
+        local at = tonumber(item.clock74At) or g_clock.millis()
+        value = value - math.floor((g_clock.millis() - at) / 1000)
+    end
+    if value <= 0 then return nil end
+    return value
+end
+
+-- minutos e horas arredondados para cima, como o look do servidor ("has energy
+-- for 15 minutes" com 14:30 restando mostra 15m)
+local function formatSeconds(secs)
+    if secs >= 600 then
+        local minutes = math.ceil(secs / 60)
+        if minutes >= 60 then
+            return string.format('%dh', math.ceil(minutes / 60))
+        end
+        return string.format('%dm', minutes)
+    end
+    return string.format('%d:%02d', math.floor(secs / 60), secs % 60)
+end
+
+local function textFor(item)
+    if not item then return nil end
+    local kind = tonumber(item.clock74Kind) or KIND_NONE
+    if kind == KIND_CHARGES then
+        local charges = tonumber(item.clock74Value) or 0
+        if charges > 0 then return tostring(charges) end
+        return nil
+    end
+    local secs = secondsLeft(item)
+    return secs and formatSeconds(secs) or nil
+end
+
+local function applyWidget(widget)
+    if not widget or widget:isDestroyed() or not widget.getItem then return end
+    local text = textFor(widget:getItem())
+    local label = widget.clock74Label
+    if label and label:isDestroyed() then
+        label = nil
+        widget.clock74Label = nil
+    end
+    if not text then
+        if label and label:isVisible() then label:setVisible(false) end
+        return
+    end
+    if not label then
+        label = g_ui.createWidget('ItemClock74Label', widget)
+        widget.clock74Label = label
+    end
+    if label:getText() ~= text then label:setText(text) end
+    if not label:isVisible() then label:setVisible(true) end
+end
+
+local function inventoryPanels()
+    local inv = modules.game_inventory
+    local ui = inv and inv.inventoryController and inv.inventoryController.ui
+    if not ui then return {} end
+    local panels = {}
+    if ui.onPanel then table.insert(panels, ui.onPanel) end
+    if ui.offPanel then table.insert(panels, ui.offPanel) end
+    return panels
+end
+
+local function refreshInventory()
+    for _, panel in ipairs(inventoryPanels()) do
+        for _, name in ipairs(INVENTORY_SLOTS) do
+            local slotPanel = panel[name]
+            if slotPanel and slotPanel.item then applyWidget(slotPanel.item) end
+        end
+    end
+end
+
+local function refreshContainer(container)
+    local panel = container and container.itemsPanel
+    if not panel or panel:isDestroyed() then return end
+    for _, widget in ipairs(panel:getChildren()) do
+        applyWidget(widget)
+    end
+end
+
+local function refreshAll()
+    if not g_game.isOnline() then return end
+    refreshInventory()
+    for _, container in pairs(g_game.getContainers()) do
+        refreshContainer(container)
+    end
+end
+
+-- depois que o módulo de inventário/containers trocou o item do widget
+local function scheduleRefresh()
+    if pendingRefresh then return end
+    pendingRefresh = addEvent(function()
+        pendingRefresh = nil
+        refreshAll()
+    end)
+end
+
+local function setClock(item, kind, value)
+    if not item then return end
+    if kind == KIND_NONE or value <= 0 then
+        item.clock74Kind = nil
+        item.clock74Value = nil
+        item.clock74At = nil
+        return
+    end
+    item.clock74Kind = kind
+    item.clock74Value = value
+    item.clock74At = g_clock.millis()
+end
+
+-- para outros módulos (casas da loja): mostra tempo/cargas num widget de item
+function showOn(widget, kind, value)
+    if not widget or not widget.getItem then return end
+    -- casa vazia: só esconde o texto que tinha ficado de outro item
+    local item = widget:getItem()
+    if item then setClock(item, kind or KIND_NONE, value or 0) end
+    applyWidget(widget)
+end
+
+local function onClock(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        local slot, kind, value = msg:getU8(), msg:getU8(), msg:getU32()
+        local ok, err = pcall(function()
+            local player = g_game.getLocalPlayer()
+            setClock(player and player:getInventoryItem(slot), kind, value)
+            refreshInventory()
+        end)
+        if not ok then g_logger.warning('itemclock74: ' .. tostring(err)) end
+    elseif sub == 2 then
+        local containerId, n = msg:getU8(), msg:getU8()
+        local list = {}
+        for i = 1, n do
+            list[i] = { index = msg:getU8(), kind = msg:getU8(), value = msg:getU32() }
+        end
+        local ok, err = pcall(function()
+            local container = g_game.getContainer(containerId)
+            if not container then return end
+            for _, e in ipairs(list) do
+                setClock(container:getItem(e.index), e.kind, e.value)
+            end
+            refreshContainer(container)
+        end)
+        if not ok then g_logger.warning('itemclock74: ' .. tostring(err)) end
+    else
+        -- subcomando de uma versão mais nova do servidor: não dá para saber o
+        -- tamanho; o servidor só manda o que a VERSION pedida conhece
+        g_logger.warning('itemclock74: subcomando desconhecido ' .. tostring(sub))
+    end
+end
+
+local function startTick()
+    if tickEvent then removeEvent(tickEvent) end
+    tickEvent = cycleEvent(refreshAll, 1000)
+end
+
+local function stopTick()
+    if tickEvent then removeEvent(tickEvent); tickEvent = nil end
+    if pendingRefresh then removeEvent(pendingRefresh); pendingRefresh = nil end
+end
+
+local function onGameStart()
+    sendHello()
+    startTick()
+end
+
+local function onGameEnd()
+    stopTick()
+end
+
+local function onContainerChange()
+    scheduleRefresh()
+end
+
+local function onInventoryChange(player, slot, item, oldItem)
+    scheduleRefresh()
+end
+
+function init()
+    g_ui.importStyle('itemclock74')
+    ProtocolGame.registerOpcode(OPCODE, onClock)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    connect(Container, { onOpen = onContainerChange, onAddItem = onContainerChange,
+                         onUpdateItem = onContainerChange, onRemoveItem = onContainerChange })
+    connect(LocalPlayer, { onInventoryChange = onInventoryChange })
+    -- módulo recarregado com o jogo aberto: o servidor manda tudo de novo no hello
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    stopTick()
+    ProtocolGame.unregisterOpcode(OPCODE)
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    disconnect(Container, { onOpen = onContainerChange, onAddItem = onContainerChange,
+                            onUpdateItem = onContainerChange, onRemoveItem = onContainerChange })
+    disconnect(LocalPlayer, { onInventoryChange = onInventoryChange })
+    -- tira os textos que ficaram nos widgets
+    local function clear(widget)
+        if widget and widget.clock74Label and not widget.clock74Label:isDestroyed() then
+            widget.clock74Label:destroy()
+        end
+        if widget then widget.clock74Label = nil end
+    end
+    for _, panel in ipairs(inventoryPanels()) do
+        for _, name in ipairs(INVENTORY_SLOTS) do
+            local slotPanel = panel[name]
+            if slotPanel then clear(slotPanel.item) end
+        end
+    end
+    for _, container in pairs(g_game.getContainers()) do
+        local panel = container.itemsPanel
+        if panel and not panel:isDestroyed() then
+            for _, widget in ipairs(panel:getChildren()) do clear(widget) end
+        end
+    end
+end

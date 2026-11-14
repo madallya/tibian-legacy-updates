@@ -1,0 +1,4 @@
+# 0.9.132 | Nov 14 2026
+- New launcher with the Telmora look: news, changelog and quick links to Discord, the website and Premium.
+- The launcher now shows the game version, and every update gets its own version number.
+- The launcher file is now called Telmora.exe; old shortcuts are updated automatically.
