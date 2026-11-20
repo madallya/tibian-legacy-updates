@@ -1,0 +1,125 @@
+// Gift de Telmora Points (mesma disposição da janela do Miracle).
+MainWindow
+  id: storeGift74Window
+  !text: tr('Gift Telmora Points')
+  size: 300 232
+  visible: false
+  @onEscape: modules.game_store74.hideGift()
+  @onEnter: modules.game_store74.sendGift()
+
+  Label
+    id: info
+    !text: tr('Please select the amount of Telmora Points you would like to gift and enter the name of the character that should receive the Telmora Points.')
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    height: 56
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: true
+    text-align: topLeft
+
+  Label
+    id: recipientLabel
+    !text: tr('Recipient:')
+    anchors.top: info.bottom
+    anchors.left: parent.left
+    margin-top: 12
+    width: 100
+    font: verdana-11px-antialised
+    color: #dfdfdf
+
+  TextEdit
+    id: recipient
+    anchors.verticalCenter: recipientLabel.verticalCenter
+    anchors.left: recipientLabel.right
+    anchors.right: parent.right
+    height: 20
+    max-length: 29
+
+  Label
+    id: transferable
+    anchors.top: recipientLabel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 16
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-align: center
+
+  Label
+    id: amountLabel
+    !text: tr('Amount to gift:')
+    anchors.top: transferable.bottom
+    anchors.left: parent.left
+    margin-top: 16
+    width: 100
+    font: verdana-11px-antialised
+    color: #dfdfdf
+
+  // campo simples só de números (o SpinBox do cliente não aceitava digitar aqui);
+  // as setas somam e tiram 1, como no Miracle. Ver store74.lua (onGiftAmountChange).
+  TextEdit
+    id: amount
+    anchors.verticalCenter: amountLabel.verticalCenter
+    anchors.left: amountLabel.right
+    anchors.right: amountUp.left
+    margin-right: 2
+    height: 20
+    max-length: 10
+    text: 0
+
+  Button
+    id: amountUp
+    size: 11 10
+    // amount.right depende desta seta: ancorar no rotulo, nao no campo
+    anchors.bottom: amountLabel.verticalCenter
+    anchors.right: parent.right
+    image-source: /images/ui/spinbox_up
+    image-border: 1
+    image-clip: 0 0 10 10
+    $hover:
+      image-clip: 0 10 10 10
+    $pressed:
+      image-clip: 0 20 10 10
+    @onClick: modules.game_store74.stepGiftAmount(1)
+
+  Button
+    id: amountDown
+    size: 11 10
+    anchors.top: amountLabel.verticalCenter
+    anchors.right: parent.right
+    image-source: /images/ui/spinbox_down
+    image-border: 1
+    image-clip: 0 0 10 10
+    $hover:
+      image-clip: 0 10 10 10
+    $pressed:
+      image-clip: 0 20 10 10
+    @onClick: modules.game_store74.stepGiftAmount(-1)
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: cancelButton.top
+    margin-bottom: 8
+
+  Button
+    id: giftButton
+    !text: tr('Gift')
+    anchors.right: cancelButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 8
+    size: 64 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_store74.sendGift()
+
+  Button
+    id: cancelButton
+    !text: tr('Cancel')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 64 22
+    font: verdana-11px-antialised
+    @onClick: modules.game_store74.hideGift()

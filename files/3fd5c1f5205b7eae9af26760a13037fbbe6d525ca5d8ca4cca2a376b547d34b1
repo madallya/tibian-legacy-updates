@@ -1,0 +1,89 @@
+// Quest Tracker no estilo do Miracle: na coluna, as quests acompanhadas com as
+// missões (marca verde quando feita) e o texto da missão feita.
+
+// título da quest em destaque (negrito, dourado); clique direito em qualquer
+// linha da quest abre o "Stop tracking"
+QuestTracker74Title < Label
+  font: Verdana Bold-11px
+  color: #f0c060
+  text-wrap: true
+  text-auto-resize: true
+  margin-top: 3
+  phantom: false
+
+// linha entre uma quest e outra (a mesma da janela de Skills)
+QuestTracker74Separator < HorizontalSeparator
+  margin-top: 5
+  margin-bottom: 1
+
+QuestTracker74Mission < UIWidget
+  height: 14
+
+  UIWidget
+    id: check
+    anchors.left: parent.left
+    anchors.top: parent.top
+    margin-top: 1
+    size: 12 12
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: check.right
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-left: 4
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    height: 14
+    phantom: true
+
+// recuo do texto com text-offset (o padding nao entra na quebra de linha nem
+// no desenho do texto); margem a direita para nao encostar na borda
+QuestTracker74Text < Label
+  phantom: false
+  text-offset: 16 0
+  margin-right: 2
+  font: verdana-11px-antialised
+  color: #c0c0c0
+  text-wrap: true
+  text-auto-resize: true
+
+MiniWindow
+  id: questTracker74Window
+  height: 120
+  &save: true
+  @onOpen: modules.game_questlog74.onTrackerOpen()
+  @onClose: modules.game_questlog74.onTrackerClose()
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/icons/icon_misc
+    size: 13 13
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('Quest Tracker')
+    color: #9d9d9dff
+
+  MiniWindowContents
+    padding-left: 4
+    padding-right: 4
+    padding-top: 2
+    layout:
+      type: verticalBox
+
+  MiniWindowCorner74

@@ -1,0 +1,415 @@
+// Comércio offline do Telmora (Player Shop). Três janelas: a própria loja, a loja
+// de outro jogador e o preço. Tudo vem do servidor (comando 0xEF, ver
+// src/game/playershop.hh); aqui só se mostra e se pede.
+PlayerShop74Text < Label
+  font: verdana-11px-antialised
+  color: #dfdfdf
+
+// linha da lista (própria loja e loja de outro)
+PlayerShop74Row < UIWidget
+  height: 36
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #ffffff22
+
+  UIItem
+    id: item
+    size: 32 32
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 2
+    virtual: true
+    phantom: true
+
+  PlayerShop74Text
+    id: name
+    anchors.left: item.right
+    anchors.right: price.left
+    anchors.top: parent.top
+    margin-left: 6
+    margin-top: 3
+    text-auto-resize: false
+    height: 14
+    phantom: true
+
+  PlayerShop74Text
+    id: info
+    anchors.left: item.right
+    anchors.right: price.left
+    anchors.top: name.bottom
+    margin-left: 6
+    color: #a0a0a0
+    height: 14
+    phantom: true
+
+  PlayerShop74Text
+    id: price
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 6
+    width: 120
+    text-align: right
+    color: #f0d060
+    phantom: true
+
+// linha do histórico de vendas
+PlayerShop74SaleRow < UIWidget
+  height: 17
+  phantom: true
+
+  // 11/11: colunas de largura fixa (sem text-auto-resize) para nada passar da janela
+  PlayerShop74Text
+    id: date
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    text-auto-resize: false
+    width: 108
+    color: #a0a0a0
+
+  PlayerShop74Text
+    id: net
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-right: 4
+    text-auto-resize: false
+    width: 74
+    text-align: right
+    color: #44d144
+
+  PlayerShop74Text
+    id: text
+    anchors.left: date.right
+    anchors.right: net.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 4
+    margin-right: 4
+    text-auto-resize: false
+
+// plaquinha em cima do personagem com a loja aberta: fundo escuro translúcido (não
+// esconde quem passa atrás, como no Miracle) e só a moldura dourada temática; a
+// descrição (o ícone de loja fica no lugar da skull, ver applyMark)
+PlayerShop74Sign < UIWidget
+  id: playerShopSign
+  height: 20
+  phantom: true
+  focusable: false
+  image-source: /game_playershop74/images/sign_border
+  image-border: 5
+
+  Label
+    id: text
+    anchors.centerIn: parent
+    font: verdana-11px-antialised
+    color: #f5e6c4
+    text-auto-resize: true
+    phantom: true
+
+// estilos comuns às janelas do vendedor e do comprador (layout do Miracle)
+// moldura das grades e da descrição: a do Miracle (medida nos prints de 10/11):
+// 1 px escuro (#282828) em cima e à esquerda, 1 px claro (#757575) embaixo e à
+// direita, e por dentro a própria textura da janela
+PlayerShop74GridBox < UIWidget
+  image-source: /game_playershop74/images/inset
+  image-border: 1
+
+PlayerShop74Grid < ScrollablePanel
+  padding: 3
+  layout:
+    type: grid
+    cell-size: 34 34
+    cell-spacing: 2
+    flow: true
+
+// casa da grade: o item com a quantidade do jeito do cliente do Miracle;
+// a escolhida ganha a moldura branca
+PlayerShop74Slot < Item
+  virtual: true
+
+  UIWidget
+    id: selected
+    anchors.fill: parent
+    border-width: 1
+    border-color: #ffffff
+    visible: false
+    phantom: true
+
+PlayerShop74Box < UIWidget
+  image-source: /game_playershop74/images/inset
+  image-border: 1
+
+// texto das janelas da loja: cinza claro, sem negrito, como no Miracle
+PlayerShop74Label < Label
+  font: verdana-11px-antialised
+  color: #c0c0c0
+
+// ---------------------------------------------------------------- a própria loja
+// Layout da janela do vendedor do Miracle (prints de 10/11): taxa, "Idle Shop" e
+// "Edit Description" em cima; grade das ofertas (encolhe para dar lugar ao
+// "Container items" quando o item escolhido é um container); embaixo o nome,
+// "Price (un):", quantidade, desenho e o look; saldo do banco, "Start Shop",
+// "History" e "Close".
+MainWindow
+  id: playerShop74Own
+  !text: tr('My Shop')
+  size: 412 428
+  visible: false
+  @onEscape: modules.game_playershop74.hideOwn()
+
+  PlayerShop74Label
+    id: feeLabel
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: idleButton.left
+    margin-top: 3
+    margin-right: 6
+    font: verdana-11px-antialised
+    text-auto-resize: false
+
+  Button
+    id: editDescButton
+    !text: tr('Edit Description')
+    anchors.top: parent.top
+    anchors.right: parent.right
+    size: 108 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.askDescription()
+
+  Button
+    id: idleButton
+    !text: tr('Idle Shop')
+    !tooltip: tr('Leave the game. Your character stays here and keeps selling.')
+    anchors.top: parent.top
+    anchors.right: editDescButton.left
+    margin-right: 6
+    size: 80 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.idleShop()
+
+  PlayerShop74GridBox
+    id: offersBox
+    anchors.top: editDescButton.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 6
+    height: 233
+
+    VerticalScrollBar
+      id: offersScroll
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 2
+      step: 36
+      pixels-scroll: true
+
+    PlayerShop74Grid
+      id: offers
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: offersScroll.left
+      margin: 2 0 2 2
+      vertical-scrollbar: offersScroll
+
+  PlayerShop74Label
+    id: ownContentLabel
+    text-auto-resize: true
+    !text: tr('Container items')
+    anchors.top: offersBox.bottom
+    anchors.left: parent.left
+    margin-top: 6
+    font: verdana-11px-antialised
+    visible: false
+
+  PlayerShop74GridBox
+    id: ownContentBox
+    anchors.top: ownContentLabel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 3
+    height: 78
+    visible: false
+
+    VerticalScrollBar
+      id: ownContentScroll
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 2
+      step: 36
+      pixels-scroll: true
+
+    PlayerShop74Grid
+      id: ownContent
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: ownContentScroll.left
+      margin: 2 0 2 2
+      vertical-scrollbar: ownContentScroll
+
+  // ---------------------------------------------------------------- oferta escolhida
+  // sem moldura, como no Miracle
+  UIWidget
+    id: ownInfoBox
+    anchors.bottom: separator.top
+    anchors.left: parent.left
+    margin-bottom: 8
+    size: 190 86
+
+    PlayerShop74Label
+      id: ownName
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: ownPreview.left
+      margin-top: 6
+      margin-left: 0
+      margin-right: 4
+      font: verdana-11px-antialised
+      text-auto-resize: false
+
+    PlayerShop74Label
+      id: ownPriceLabel
+      !text: tr('Price (un):')
+      anchors.top: ownName.bottom
+      anchors.left: parent.left
+      margin-top: 6
+      margin-left: 0
+      font: verdana-11px-antialised
+      text-auto-resize: true
+
+    TextEdit
+      id: ownPrice
+      anchors.verticalCenter: ownPriceLabel.verticalCenter
+      anchors.left: ownPriceLabel.right
+      anchors.right: ownPreview.left
+      margin-left: 4
+      margin-right: 6
+      height: 16
+      font: verdana-11px-antialised
+      max-length: 10
+      // sem item (ou loja aberta) o Miracle mostra o preço em cinza, ainda legível
+      $disabled:
+        color: #8a8a8a
+        opacity: 1
+
+    HorizontalScrollBar
+      id: ownAmountScroll
+      anchors.top: ownPriceLabel.bottom
+      anchors.left: parent.left
+      margin-top: 6
+      margin-left: 0
+      width: 128
+      minimum: 1
+      maximum: 1
+      value: 1
+
+
+    PlayerShop74Label
+      id: ownAmountLabel
+      anchors.top: ownAmountScroll.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      margin-left: 0
+      font: verdana-11px-antialised
+      text-auto-resize: true
+
+    Item
+      id: ownPreview
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.right: parent.right
+      margin-right: 5
+      size: 50 50
+      virtual: true
+      phantom: true
+
+  VerticalSeparator
+    id: ownInfoSeparator
+    anchors.top: ownInfoBox.top
+    anchors.bottom: ownInfoBox.bottom
+    anchors.left: ownInfoBox.right
+    margin-left: 3
+
+  PlayerShop74Box
+    id: ownDescBox
+    anchors.top: ownInfoBox.top
+    anchors.left: ownInfoSeparator.right
+    anchors.right: parent.right
+    anchors.bottom: ownInfoBox.bottom
+    margin-left: 4
+
+    PlayerShop74Label
+      id: ownDescription
+      anchors.fill: parent
+      margin: 6 7 4 7
+      font: verdana-11px-antialised
+      text-wrap: true
+      text-align: topLeft
+      text-auto-resize: false
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: ownGoldBox.top
+    margin-bottom: 8
+
+  // ---------------------------------------------------------------- saldo e botões
+  UIWidget
+    id: ownGoldBox
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    size: 128 18
+    image-source: /game_playershop74/images/inset_dark
+    image-border: 1
+    !tooltip: tr('Bank balance. Your sales are paid into your bank account.')
+
+    UIWidget
+      id: coin
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 5
+      size: 9 9
+      image-source: /images/game/cyclopedia/icons/icon-goldcoin
+      phantom: true
+
+    PlayerShop74Label
+      id: value
+      anchors.left: parent.left
+      anchors.right: coin.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      text-align: right
+      font: verdana-11px-antialised
+      phantom: true
+      text: 0
+
+  Button
+    id: startButton
+    !text: tr('Start Shop')
+    anchors.left: ownGoldBox.right
+    anchors.verticalCenter: ownGoldBox.verticalCenter
+    margin-left: 6
+    size: 80 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.startOrPause()
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.verticalCenter: ownGoldBox.verticalCenter
+    size: 64 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.hideOwn()
+
+  Button
+    id: historyButton
+    !text: tr('History')
+    anchors.right: closeButton.left
+    anchors.verticalCenter: ownGoldBox.verticalCenter
+    margin-right: 6
+    size: 64 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.showSales()

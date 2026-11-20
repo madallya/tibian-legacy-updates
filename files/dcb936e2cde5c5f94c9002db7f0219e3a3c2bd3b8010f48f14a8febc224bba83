@@ -1,0 +1,44 @@
+// Descrição da loja, como a janela "Edit your Shop Description" do Miracle (print de 10/11):
+// texto, caixa grande de várias linhas, separador e "Save".
+MainWindow
+  id: playerShop74Desc
+  !text: tr('Edit your Shop Description')
+  size: 300 210
+  visible: false
+  @onEscape: modules.game_playershop74.hideDescription()
+
+  PlayerShop74Label
+    id: info
+    !text: tr('Your shop description will be displayed on the top of your character:')
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    text-wrap: true
+    text-auto-resize: true
+
+  MultilineTextEdit
+    id: descEdit
+    anchors.top: info.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: separator.top
+    margin-top: 8
+    margin-bottom: 10
+    font: verdana-11px-antialised
+    text-wrap: true
+
+  HorizontalSeparator
+    id: separator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: saveButton.top
+    margin-bottom: 8
+
+  Button
+    id: saveButton
+    !text: tr('Save')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 64 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.saveDescription()

@@ -1,0 +1,561 @@
+-- NPC Trade do Telmora (OTServ 7.4), no layout da janela "NPC Trade" do Miracle.
+-- Tudo vem do servidor pelo comando 0xF7 (protocolo em src/game/npctrade.hh do servidor):
+--  * o jogador fala "trade" com o NPC; o servidor manda a lista (sub 1) e o que o jogador
+--    tem (sub 2: ouro carregado e quanto ele pode vender de cada item da Sell);
+--  * a janela fecha sozinha quando o NPC para de falar com o jogador (sub 3);
+--  * compra/venda: o cliente só pede; ouro, capacidade, espaço e as regras do NPC são
+--    conferidos lá, e a resposta vem no sub 4.
+-- Decisões do dono (17/11): janela sem cadeado (temporária); o que dá para trocar vai
+-- sempre para o topo, em cor clara; a quantidade começa em 1 e vai até o máximo (o que o
+-- ouro paga, na compra; o que o jogador tem, na venda); "Currency" é só o símbolo da
+-- moeda do NPC (o ouro aceita gold, platinum e crystal).
+
+local OPCODE = 0xF7
+local HELLO_VERSION = 1
+local MAX_UNITS = 100              -- por pedido (o servidor recusa acima disso)
+local COLOR_OFF = '#787878'        -- medido no Miracle: linha que não dá para trocar
+local COLOR_ON = '#bfbfbf'         -- linha que dá para trocar
+local COLOR_SELECTED = '#6b6b6b'   -- medido no Miracle: fundo da linha escolhida (faixa inteira)
+local SORT_KEY = 'classic74_npctradeSort'
+local IGNORE_KEY = 'classic74_npctradeIgnoreEquipped'
+
+local window
+local trade = nil                  -- { npc, name, coin, coinDraw, currency, buy = {...}, sell = {...} }
+local goods = { money = 0, owned = {} }
+local mode = 'buy'
+local selected = nil               -- índice da oferta (base 1) na lista do modo atual
+local closingByServer = false
+local updatingAmount = false
+
+-- ------------------------------------------------------------------ utilidades
+local function child(id)
+    return window and window:recursiveGetChildById(id) or nil
+end
+
+local function send(fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then return false end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    fill(msg)
+    protocol:send(msg)
+    return true
+end
+
+-- 1.500 como nas outras janelas do Miracle (loja do comércio offline)
+local function formatGold(n)
+    local s = string.format('%.0f', math.abs(n or 0))
+    local out = s:reverse():gsub('(%d%d%d)', '%1.'):reverse()
+    if out:sub(1, 1) == '.' then out = out:sub(2) end
+    return out
+end
+
+local function sortBy()
+    local v = g_settings.getString(SORT_KEY)
+    if v == 'price' or v == 'weight' then return v end
+    return 'name'
+end
+
+-- Ignore Equipped: sempre marcado quando a janela abre (dono, 18/11); desmarcar vale só até
+-- fechar a janela
+local ignoreEq = true
+local function ignoreEquipped()
+    return ignoreEq
+end
+
+-- qualquer clique na janela conta como conversa com o NPC (dono, 18/11): sem isso o NPC
+-- dava bye depois de 30 s só olhando a lista. No máximo 1 aviso a cada 2 s.
+local lastPing = 0
+local function ping()
+    if not trade then return end
+    local now = g_clock.millis()
+    if now - lastPing < 2000 then return end
+    lastPing = now
+    send(function(msg) msg:addU8(6) end)
+end
+
+local function hello()
+    local flags = ignoreEquipped() and 1 or 0
+    send(function(msg) msg:addU8(1); msg:addU8(HELLO_VERSION); msg:addU8(flags) end)
+end
+
+local function offers()
+    if not trade then return {} end
+    return mode == 'buy' and trade.buy or trade.sell
+end
+
+-- quantos pacotes dá para trocar agora (0 = linha cinza)
+local function maxPacks(index)
+    local o = offers()[index]
+    if not o or o.price <= 0 then return 0 end
+    local limit = math.max(1, math.floor(MAX_UNITS / math.max(1, o.pack)))
+    local n
+    if mode == 'buy' then
+        n = math.floor((goods.money or 0) / o.price)
+    else
+        n = math.floor((goods.owned[index] or 0) / math.max(1, o.pack))
+    end
+    return math.max(0, math.min(n, limit))
+end
+
+-- corta o texto para caber na largura (o nome inteiro fica na dica)
+local function fitText(label, text, width)
+    label:setText(text)
+    if width <= 0 or label:getTextSize().width <= width then return false end
+    local s = text
+    while #s > 1 do
+        s = s:sub(1, -2)
+        label:setText(s .. '...')
+        if label:getTextSize().width <= width then break end
+    end
+    return true
+end
+
+-- ------------------------------------------------------------------ seleção e quantidade
+local function amountValue()
+    local scroll = child('amountScroll')
+    -- arrastando, o valor da barra fica fracionado (1,3...): conta o inteiro mais próximo
+    return scroll and math.floor(scroll:getValue() + 0.5) or 1
+end
+
+local function updateTotals()
+    if not window then return end
+    local o = selected and offers()[selected] or nil
+    local packs = o and amountValue() or 0
+    local can = o and maxPacks(selected) > 0
+    child('priceValue'):setText(formatGold(o and (o.price * packs) or 0))
+    child('moneyValue'):setText(formatGold(goods.money or 0))
+    child('okButton'):setEnabled(can and packs >= 1 and true or false)
+end
+
+local function setAmount(value, fromEdit, fromScroll)
+    if updatingAmount then return end
+    updatingAmount = true
+    local scroll = child('amountScroll')
+    local edit = child('amountEdit')
+    local max = selected and math.max(1, maxPacks(selected)) or 1
+    value = math.max(1, math.min(tonumber(value) or 1, max))
+    -- vindo da própria barra não devolve o valor para ela: arrastando devagar cada movimento
+    -- anda uma fração (com poucas unidades, como na venda) e arredondar de volta a cada
+    -- movimento prendia a barra no lugar (só as setas funcionavam)
+    if not fromScroll then
+        scroll:setValue(value)
+    end
+    if not fromEdit or tostring(value) ~= edit:getText() then
+        edit:setText(tostring(value))
+    end
+    updatingAmount = false
+    updateTotals()
+end
+
+local function updateSelection(keepAmount)
+    if not window then return end
+    local o = selected and offers()[selected] or nil
+    local preview = child('preview')
+    local scroll = child('amountScroll')
+    local edit = child('amountEdit')
+    if not o then
+        preview:clearItem()
+        scroll:setRange(1, 1)
+        edit:setText('')
+        edit:setEnabled(false)
+        updateTotals()
+        return
+    end
+    preview:setItemId(o.item)
+    preview:setItemCount(math.max(1, o.draw))
+    local max = math.max(1, maxPacks(selected))
+    local can = maxPacks(selected) > 0
+    local current = keepAmount and amountValue() or 1
+    -- a barra nunca fica desligada: como no Miracle, sem o que escolher ela mostra o
+    -- botão ocupando a barra inteira (faixa 1..1)
+    scroll:setRange(1, max)
+    edit:setEnabled(can)
+    setAmount(math.min(current, max))
+end
+
+-- ------------------------------------------------------------------ lista
+-- "Price 20, 40.00 oz" como no Miracle: preço sem separador de milhar na linha (o
+-- ponto ficava parecendo o do peso: "6.600, 8.30 oz"). Se não couber, o peso perde os
+-- zeros do fim ("120 oz"); só então corta com reticências (o texto inteiro fica na dica).
+local function setRowInfo(label, o, width)
+    local price = string.format('%.0f', o.price or 0)
+    local oz = string.format('%.2f', (o.weight or 0) / 100)
+    local full = tr('Price %s, %s oz', price, oz)
+    label:setText(full)
+    if width <= 0 or label:getTextSize().width <= width then return full, false end
+    local short = oz:gsub('0+$', ''):gsub('%.$', '')
+    local text = tr('Price %s, %s oz', price, short)
+    label:setText(text)
+    if label:getTextSize().width <= width then return full, false end
+    return full, fitText(label, text, width)
+end
+
+-- fundo da linha escolhida, sem montar a lista de novo (montar de novo perdia a rolagem)
+function highlightRows()
+    local panel = child('list')
+    if not panel then return end
+    for _, row in ipairs(panel:getChildren()) do
+        row:setBackgroundColor(row.npcIndex == selected and COLOR_SELECTED or 'alpha')
+    end
+end
+
+function selectRow(row)
+    if not row or not row.npcIndex then return end
+    ping()
+    selected = row.npcIndex
+    highlightRows()
+    -- a linha escolhida fica inteira à vista (a última, cortada embaixo, sobe o necessário)
+    local panel = child('list')
+    if panel then panel:ensureChildVisible(row) end
+    updateSelection(false)
+end
+
+local function refreshList(keepAmount)
+    if not window or not trade then return end
+    child('buyButton'):setOn(mode == 'buy')
+    child('sellButton'):setOn(mode == 'sell')
+
+    local filter = (child('search'):getText() or ''):lower()
+    local by = sortBy()
+    local list = {}
+    for i, o in ipairs(offers()) do
+        if filter == '' or o.name:lower():find(filter, 1, true) then
+            table.insert(list, { index = i, offer = o, can = maxPacks(i) > 0 })
+        end
+    end
+    -- o que dá para trocar sempre no topo; depois a ordem escolhida no menu
+    table.sort(list, function(a, b)
+        if a.can ~= b.can then return a.can end
+        local oa, ob = a.offer, b.offer
+        if by == 'price' and oa.price ~= ob.price then return oa.price < ob.price end
+        if by == 'weight' and oa.weight ~= ob.weight then return oa.weight < ob.weight end
+        if oa.name ~= ob.name then return oa.name < ob.name end
+        return a.index < b.index
+    end)
+
+    local panel = child('list')
+    local scroll = child('listScroll')
+    local keep = scroll and scroll:getValue() or 0
+    panel:destroyChildren()
+    for _, e in ipairs(list) do
+        local row = g_ui.createWidget('NpcTrade74Row', panel)
+        local item = row:getChildById('item')
+        item:setItemId(e.offer.item)
+        item:setItemCount(math.max(1, e.offer.draw))
+        local color = e.can and COLOR_ON or COLOR_OFF
+        local name, info = row:getChildById('name'), row:getChildById('info')
+        name:setColor(color)
+        info:setColor(color)
+        -- o texto pode ir ate a borda da linha (antes da barra), como no Miracle
+        local width = panel:getPaddingRect().width - 38
+        local cut = fitText(name, e.offer.name, width)
+        local full, cutInfo = setRowInfo(info, e.offer, width)
+        row:setTooltip((cut or cutInfo) and (e.offer.name .. '\n' .. full) or '')
+        row.npcIndex = e.index
+        row.onMousePress = function(widget, mousePos, button)
+            if button ~= MouseLeftButton then return false end
+            selectRow(widget)
+            return true
+        end
+    end
+    highlightRows()
+    -- a rolagem volta para onde estava depois que a lista nova for arrumada (na hora a
+    -- lista ainda está vazia e a barra perdia a posição: a lista "subia")
+    if scroll then
+        scroll:setValue(keep)
+        addEvent(function()
+            if window and child('listScroll') == scroll then
+                panel:updateScrollBars()
+                scroll:setValue(keep)
+            end
+        end)
+    end
+    updateSelection(keepAmount)
+end
+
+-- ------------------------------------------------------------------ janela
+local function openWindow()
+    if not window then return end
+    if not window:getParent() then
+        local panel = modules.game_interface.findContentPanelAvailable(window, window:getMinimumHeight())
+        if not panel then return end
+        panel:addChild(window)
+    end
+    window:open()
+end
+
+local function closeWindow()
+    if not window then return end
+    -- isExplicitlyVisible: no logout a coluna some antes (isVisible já dava falso) e a
+    -- janela voltava aberta no próximo login, com a conversa já encerrada
+    if window:isExplicitlyVisible() then
+        closingByServer = true
+        window:close()
+        closingByServer = false
+    end
+end
+
+-- ------------------------------------------------------------------ digitar na janela
+-- As colunas do jogo não recebem foco (o teclado fica no chat), então a busca e a quantidade
+-- não recebiam as teclas. Ao clicar num campo, as colunas passam a aceitar foco (como a busca
+-- do Boss Cooldowns) e as teclas de andar (WASD) saem enquanto se digita. Enter, Esc, clicar no
+-- mapa ou no chat, ou fechar a janela devolvem o teclado ao jogo.
+local typing = nil
+local FOCUS_REASON = 'npctrade74'
+
+local function stopTyping()
+    if not typing then return end
+    typing = nil
+    local gi = modules.game_interface
+    if gi and gi.toggleFocus then gi.toggleFocus(false, FOCUS_REASON) end
+    -- WASD de volta conforme o modo do chat (ligado: continuam fora)
+    local console = modules.game_console
+    if console and console.updateChatMode then pcall(console.updateChatMode) end
+end
+
+local function startTyping(edit)
+    if not window or not edit:isEnabled() then return end
+    local gi = modules.game_interface
+    if gi and gi.toggleFocus then gi.toggleFocus(true, FOCUS_REASON) end
+    -- foco do campo até a raiz (cada um vira o filho em foco do pai)
+    local w = edit
+    while w and w ~= rootWidget do
+        w:focus()
+        w = w:getParent()
+    end
+    if not typing then
+        typing = edit
+        local walk = modules.game_walk
+        if walk then
+            for _, k in ipairs({ 'W', 'D', 'S', 'A', 'E', 'Q', 'C', 'Z' }) do walk.unbindWalkKey(k) end
+            for _, k in ipairs({ 'Control+W', 'Control+D', 'Control+S', 'Control+A' }) do walk.unbindTurnKey(k) end
+        end
+    end
+    typing = edit
+end
+
+-- o foco do jogo foi para outra coisa (chat, outra coluna): para de digitar
+function onRootFocusChange(self, focused)
+    if typing and focused and window and focused ~= window:getParent() then stopTyping() end
+end
+
+function onMapPress()
+    stopTyping()
+end
+
+function onWindowClose()
+    stopTyping()
+    -- fechou pelo X: o servidor para de mandar o que o jogador tem (a conversa continua)
+    if trade and not closingByServer then
+        send(function(msg) msg:addU8(4) end)
+    end
+    trade = nil
+    selected = nil
+end
+
+function setMode(newMode)
+    if newMode ~= 'buy' and newMode ~= 'sell' then return end
+    ping()
+    if mode ~= newMode then
+        mode = newMode
+        selected = nil
+        local scroll = child('listScroll')
+        if scroll then scroll:setValue(0) end
+    end
+    refreshList(false)
+end
+
+function clearSearch()
+    ping()
+    local search = child('search')
+    if search then search:setText('') end
+end
+
+function confirm()
+    if not trade or not selected then return end
+    local o = offers()[selected]
+    if not o or maxPacks(selected) <= 0 then return end
+    local packs = amountValue()
+    local server = selected - 1
+    if mode == 'buy' then
+        send(function(msg) msg:addU8(2); msg:addU16(server); msg:addU16(packs); msg:addU32(o.price) end)
+    else
+        local flags = ignoreEquipped() and 1 or 0
+        send(function(msg) msg:addU8(3); msg:addU16(server); msg:addU16(packs); msg:addU32(o.price); msg:addU8(flags) end)
+    end
+end
+
+local function sellAll()
+    local flags = ignoreEquipped() and 1 or 0
+    send(function(msg) msg:addU8(5); msg:addU8(flags) end)
+end
+
+local function showMenu(button)
+    ping()
+    local by = sortBy()
+    local menu = g_ui.createWidget('PopupMenu')
+    menu:setGameMenu(true)
+    menu:addOption(tr('Sell All'), sellAll)
+    menu:addSeparator()
+    local function setBy(v) g_settings.set(SORT_KEY, v); refreshList(true) end
+    menu:addCheckBox(tr('Sort by name'), by == 'name', function() setBy('name') end)
+    menu:addCheckBox(tr('Sort by price'), by == 'price', function() setBy('price') end)
+    menu:addCheckBox(tr('Sort by weight'), by == 'weight', function() setBy('weight') end)
+    menu:addSeparator()
+    menu:addCheckBox(tr('Ignore Equipped'), ignoreEquipped(), function()
+        ignoreEq = not ignoreEq
+        hello() -- o servidor reconta o que dá para vender
+    end)
+    local r = button:getRect()
+    menu:display({ x = r.x, y = r.y + r.height })
+end
+
+-- ------------------------------------------------------------------ servidor
+local function readOffers(msg)
+    local list = {}
+    for _ = 1, msg:getU16() do
+        local o = {}
+        o.item = msg:getU16()
+        o.draw = msg:getU8()
+        o.name = msg:getString()
+        o.price = msg:getU32()
+        o.weight = msg:getU32()
+        o.pack = msg:getU16()
+        table.insert(list, o)
+    end
+    return list
+end
+
+local function onNpcTrade(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        local t = {}
+        t.npc = msg:getU32()
+        t.name = msg:getString()
+        t.coin = msg:getU16()
+        t.coinDraw = msg:getU8()
+        t.currency = msg:getString()
+        t.buy = readOffers(msg)
+        t.sell = readOffers(msg)
+        trade = t
+        goods = { money = 0, owned = {} }
+        if not ignoreEq then
+            -- janela nova vem com Ignore Equipped marcado; o servidor fica sabendo
+            ignoreEq = true
+            hello()
+        end
+        selected = nil
+        mode = (#t.buy == 0 and #t.sell > 0) and 'sell' or 'buy'
+        if window then
+            child('search'):setText('')
+            child('currencyName'):setText(tr(t.currency))
+            local coin = child('currencyItem')
+            coin:setItemId(t.coin)
+            coin:setItemCount(math.max(1, t.coinDraw))
+            local scroll = child('listScroll')
+            if scroll then scroll:setValue(0) end
+            openWindow()
+            refreshList(false)
+        end
+    elseif sub == 2 then
+        local g = { money = msg:getU32(), owned = {} }
+        for i = 1, msg:getU16() do g.owned[i] = msg:getU32() end
+        goods = g
+        if trade then refreshList(true) end
+    elseif sub == 3 then
+        trade = nil
+        selected = nil
+        closeWindow()
+    elseif sub == 4 then
+        local ok = msg:getU8() == 1
+        local text = msg:getString()
+        local tm = modules.game_textmessage
+        if tm and text ~= '' then
+            if ok then tm.displayGameMessage(text) else tm.displayFailureMessage(text) end
+        end
+    end
+    return true
+end
+
+-- ------------------------------------------------------------------ jogo
+local function onGameStart()
+    -- conversa nova a cada login: nenhuma janela de NPC volta aberta
+    trade = nil
+    selected = nil
+    closeWindow()
+    -- hello: sem ele o servidor nunca abre a janela ("trade" fica só no diálogo)
+    scheduleEvent(hello, 300)
+end
+
+local function onGameEnd()
+    stopTyping()
+    trade = nil
+    selected = nil
+    closeWindow()
+end
+
+function init()
+    window = g_ui.loadUI('npctrade74')
+    window:setup()
+    -- janela temporária: sem o cadeado (decisão do dono, 17/11) nem a barra de rolagem
+    -- da coluna (a lista tem a dela)
+    local lock = window:getChildById('lockButton')
+    if lock then lock:destroy() end
+    window:keepBasicButtons()
+    local winScroll = window:getChildById('miniwindowScrollBar')
+    if winScroll then winScroll:hide() end
+    -- cabe a parte de baixo inteira e pelo menos 2 linhas da lista
+    window:setContentMinimumHeight(46 + 2 * 36 + 4 + 4 + 93 + 14)
+    window:close(true)
+
+    child('currencyItem'):setShowCount(false)
+    local menuButton = window:getChildById('npcTradeMenuButton')
+    menuButton.onClick = function() showMenu(menuButton) end
+    child('search').onTextChange = function() ping(); refreshList(true) end
+    child('amountScroll').onValueChange = function(self, value) ping(); setAmount(value, false, true) end
+    -- rolar a lista e clicar em qualquer parte da janela também contam
+    -- (connect na frente: não tira o comportamento original de cada widget)
+    connect(child('listScroll'), { onValueChange = function()
+        -- só arrasto do jogador; a lista refeita pelo servidor não renova a conversa
+        if g_mouse.isPressed(MouseLeftButton) then ping() end
+    end })
+    connect(window, { onMousePress = function() ping() end }, true)
+    connect(child('list'), { onMouseWheel = function() ping() end }, true)
+    local edit = child('amountEdit')
+    edit.onTextChange = function(self, text)
+        if updatingAmount then return end
+        local n = tonumber(text)
+        if n then setAmount(n, true) end
+    end
+    g_keyboard.bindKeyDown('Enter', function() confirm(); stopTyping() end, edit)
+    for _, id in ipairs({ 'search', 'amountEdit' }) do
+        local e = child(id)
+        connect(e, { onMousePress = function(self, mousePos, button)
+            if button == MouseLeftButton then startTyping(self) end
+        end }, true)
+        g_keyboard.bindKeyDown('Escape', stopTyping, e)
+    end
+    g_keyboard.bindKeyDown('Enter', stopTyping, child('search'))
+    -- clicar no mapa ou no chat devolve o teclado ao jogo
+    connect(modules.game_interface.getRootPanel(), { onChildFocusChange = onRootFocusChange })
+    local map = modules.game_interface.getMapPanel()
+    if map then connect(map, { onMousePress = onMapPress }, true) end
+    updateSelection(false)
+
+    ProtocolGame.registerOpcode(OPCODE, onNpcTrade)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    stopTyping()
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    disconnect(modules.game_interface.getRootPanel(), { onChildFocusChange = onRootFocusChange })
+    local map = modules.game_interface.getMapPanel()
+    if map then disconnect(map, { onMousePress = onMapPress }) end
+    ProtocolGame.unregisterOpcode(OPCODE)
+    if window then window:destroy() end
+    window = nil
+    trade = nil
+end

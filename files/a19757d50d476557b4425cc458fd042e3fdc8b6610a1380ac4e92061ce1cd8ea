@@ -1,0 +1,27 @@
+-- OTServ 7.4: itens que o Tibia.dat 7.4 deixa andar mas o servidor bloqueia (Unpass em
+-- todos os tipos do servidor que usam esse desenho). Sem isto o cliente tenta o passo e o
+-- servidor responde "Sorry, not possible" (ex.: beira de rio/mar do mapa 7.5, grama com agua).
+-- Gerado por gerar_andar74.py (objects.srv + client74.dat + mapa).
+NotWalkable74 = {
+    [495] = true, -- sand (211 tiles)
+    [497] = true, -- sand (374 tiles)
+    [499] = true, -- sand (86 tiles)
+    [500] = true, -- sand (158 tiles)
+    [501] = true, -- sand (85 tiles)
+    [504] = true, -- sand (163 tiles)
+    [567] = true, -- grass (53 tiles)
+    [569] = true, -- grass (68 tiles)
+    [571] = true, -- grass (70 tiles)
+    [572] = true, -- grass (78 tiles)
+    [573] = true, -- grass (56 tiles)
+    [576] = true, -- grass (58 tiles)
+    [579] = true, -- grass (5368 tiles)
+    [581] = true, -- grass (4972 tiles)
+    [583] = true, -- grass (3446 tiles)
+    [584] = true, -- grass (3615 tiles)
+    [585] = true, -- grass (3520 tiles)
+    [588] = true, -- grass (3670 tiles)
+    [1278] = true, -- a palisade (446 tiles)
+    [1279] = true, -- a sail (62 tiles)
+    -- 2781 (mato cortado com machete) anda: o mato 7.7 que bloqueia (3702) agora usa o 2782
+}

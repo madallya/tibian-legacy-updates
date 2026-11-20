@@ -1,0 +1,316 @@
+// NPC Trade (comando 0xF7, servidor npctrade.hh), no layout da janela "NPC Trade" do
+// Miracle (prints de 17/11). Janela da coluna, como Skills/Battle/Hunt Analyzer, mas
+// temporaria: so existe enquanto o NPC fala com o jogador, por isso fica SEM o cadeado
+// (decisao do dono, 17/11); o menu (≡) fica 1 px a esquerda do minimizar, como no Miracle.
+// Posicoes medidas no print 142672d1 (181 x 368). Origem do conteudo = 3 px da esquerda
+// e 17 px do topo da janela (MiniWindowContents).
+
+NpcTrade74Label < Label
+  font: verdana-11px-antialised
+  color: #c0c0c0
+  text-auto-resize: true
+  phantom: true
+
+// linha da lista: faixa de 36 px (como no Miracle: 1 px, a casa do item de 34 x 34
+// e 1 px); a escolhida fica com o fundo #6b6b6b na faixa inteira. Nome e
+// "Price X, Y.YY oz" em verdana monocromatica, cinza (#787878) ou claro (#bfbfbf)
+// quando da para trocar (sempre no topo da lista)
+NpcTrade74Row < UIWidget
+  height: 36
+  focusable: false
+
+  Item
+    id: item
+    anchors.top: parent.top
+    anchors.left: parent.left
+    margin-top: 1
+    virtual: true
+    phantom: true
+
+  Label
+    id: name
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 4
+    margin-left: 38
+    height: 14
+    font: verdana-11px-monochrome
+    color: #787878
+    text-align: topLeft
+    phantom: true
+
+  Label
+    id: info
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 17
+    margin-left: 38
+    height: 14
+    font: verdana-11px-monochrome
+    color: #787878
+    text-align: topLeft
+    phantom: true
+
+MiniWindow
+  id: npcTrade74Window
+  height: 364
+  &save: true
+  @onClose: modules.game_npctrade74.onWindowClose()
+  // recebe foco para a busca e a quantidade aceitarem teclas
+  focusable: true
+
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /game_npctrade74/images/icon-npctrade
+    size: 12 12
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    !text: tr('NPC Trade')
+    color: #9d9d9dff
+
+  // menu (Sell All, ordem, Ignore Equipped): 1 px a esquerda do minimizar, como no Miracle
+  UIButton
+    id: npcTradeMenuButton
+    anchors.top: minimizeButton.top
+    anchors.right: minimizeButton.left
+    margin-right: 1
+    size: 12 12
+    image-size: 14 14
+    image-source: /images/ui/miniwindow_buttons
+    image-clip: 112 0 14 14
+    $hover:
+      image-clip: 112 14 14 14
+    $pressed:
+      image-clip: 112 28 14 14
+
+  MiniWindowContents
+    anchors.right: parent.right
+    margin-right: 3
+
+    // ------------------------------------------------------------ moeda e Buy/Sell
+    NpcTrade74Label
+      id: currencyLabel
+      !text: tr('Currency:')
+      anchors.top: parent.top
+      anchors.left: parent.left
+      margin-top: 6
+      margin-left: 5
+
+    NpcTrade74Label
+      id: currencyName
+      anchors.top: parent.top
+      anchors.left: parent.left
+      margin-top: 26
+      margin-left: 5
+
+    Item
+      id: currencyItem
+      anchors.top: parent.top
+      anchors.left: parent.left
+      margin-top: 6
+      margin-left: 79
+      virtual: true
+      phantom: true
+
+    Button
+      id: buyButton
+      !text: tr('Buy (button)')
+      anchors.top: parent.top
+      anchors.right: parent.right
+      margin-top: 5
+      margin-right: 4
+      size: 50 17
+      @onClick: modules.game_npctrade74.setMode('buy')
+
+    Button
+      id: sellButton
+      !text: tr('Sell (button)')
+      anchors.top: buyButton.bottom
+      anchors.right: parent.right
+      margin-top: 3
+      margin-right: 4
+      size: 50 18
+      @onClick: modules.game_npctrade74.setMode('sell')
+
+    // ------------------------------------------------------------ lista
+    VerticalScrollBar
+      id: listScroll
+      anchors.top: parent.top
+      anchors.bottom: bottomPanel.top
+      anchors.right: parent.right
+      margin-top: 46
+      margin-bottom: 5
+      margin-right: 4
+      step: 36
+      pixels-scroll: true
+
+    ScrollablePanel
+      id: list
+      anchors.top: parent.top
+      anchors.bottom: bottomPanel.top
+      anchors.left: parent.left
+      anchors.right: listScroll.left
+      margin-top: 46
+      margin-bottom: 5
+      margin-left: 5
+      // 1 px de folga: a lista cobria a 1a coluna da barra (a borda clara das setas e do
+      // trilho, como no Battle List)
+      margin-right: 1
+      image-source: /game_npctrade74/images/list_frame
+      image-border-top: 3
+      image-border-bottom: 3
+      image-border-left: 1
+      image-border-right: 0
+      // um pouco de espaco acima do primeiro item (dono, 18/11)
+      padding-top: 3
+      padding-left: 4
+      padding-bottom: 2
+      vertical-scrollbar: listScroll
+      layout:
+        type: verticalBox
+        spacing: 0
+
+    // ------------------------------------------------------------ busca, quantidade e Ok
+    UIWidget
+      id: bottomPanel
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      // 93: a parte de baixo fica na mesma distancia da borda de baixo que no Miracle
+      // (busca 91 px acima da borda; com 97 ficava tudo 4 px mais alto)
+      height: 93
+      phantom: true
+
+      // X fino desenhado (como no Miracle), nao a letra X
+      Button
+        id: clearSearch
+        anchors.top: parent.top
+        anchors.right: parent.right
+        margin-top: 1
+        margin-right: 4
+        size: 18 18
+        @onClick: modules.game_npctrade74.clearSearch()
+
+        UIWidget
+          anchors.centerIn: parent
+          margin-right: 1
+          margin-bottom: 1
+          size: 10 10
+          image-source: /game_npctrade74/images/icon-clear
+          phantom: true
+
+      TextEdit
+        id: search
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: clearSearch.left
+        margin-left: 4
+        margin-right: 1
+        height: 20
+        // "Type to search" na mesma posicao do Miracle (o padrao centraliza 3 px mais baixo)
+        padding-left: 4
+        padding-top: 0
+        placeholder-align: topLeft
+        max-length: 30
+        !placeholder: tr('Type to search')
+        placeholder-color: #a0a0a0
+
+      HorizontalScrollBar
+        id: amountScroll
+        anchors.top: parent.top
+        anchors.left: parent.left
+        margin-top: 26
+        margin-left: 5
+        size: 109 12
+        minimum: 1
+        maximum: 1
+        value: 1
+        step: 1
+
+      Item
+        id: preview
+        anchors.top: parent.top
+        anchors.right: parent.right
+        margin-top: 26
+        margin-right: 4
+        virtual: true
+        phantom: true
+
+      NpcTrade74Label
+        id: amountLabel
+        !text: tr('Amount:')
+        anchors.top: parent.top
+        anchors.left: parent.left
+        margin-top: 43
+        margin-left: 5
+
+      TextEdit
+        id: amountEdit
+        anchors.top: parent.top
+        anchors.left: parent.left
+        margin-top: 43
+        margin-left: 56
+        size: 60 16
+        max-length: 3
+        text-align: right
+        padding-right: 3
+
+      NpcTrade74Label
+        id: priceLabel
+        !text: tr('Price:')
+        anchors.top: parent.top
+        anchors.left: parent.left
+        margin-top: 59
+        margin-left: 5
+
+      NpcTrade74Label
+        id: priceValue
+        text: 0
+        anchors.top: parent.top
+        anchors.right: amountEdit.right
+        margin-top: 59
+        margin-right: 2
+
+      NpcTrade74Label
+        id: moneyLabel
+        !text: tr('Money:')
+        anchors.top: parent.top
+        anchors.left: parent.left
+        margin-top: 75
+        margin-left: 5
+
+      NpcTrade74Label
+        id: moneyValue
+        text: 0
+        anchors.top: parent.top
+        anchors.right: amountEdit.right
+        margin-top: 75
+        margin-right: 2
+
+      Button
+        id: okButton
+        !text: tr('Ok')
+        anchors.top: parent.top
+        anchors.right: parent.right
+        margin-top: 66
+        margin-right: 4
+        size: 50 23
+        text-offset: 0 1
+        @onClick: modules.game_npctrade74.confirm()
+
+  MiniWindowCorner74

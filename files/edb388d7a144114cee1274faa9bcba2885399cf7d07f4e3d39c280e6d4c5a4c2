@@ -1,0 +1,10 @@
+Module
+  name: game_npctrade74
+  description: NPC Trade do Telmora (comando 0xF7): janela de compra e venda dos NPCs, no layout do Miracle
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ npctrade74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

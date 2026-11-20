@@ -1,0 +1,10 @@
+Module
+  name: game_itemclock74
+  description: Tempo dos anéis e itens de luz e cargas dos amuletos embaixo do item, como no cliente do Miracle (comando 0xF6, itemclock.hh no servidor)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ itemclock74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()
