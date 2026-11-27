@@ -1,0 +1,35 @@
+// Telmora: aura do Berserk (atributos, 0xEB sub 6), na cor da elite vermelha
+// (game_elite74/elite_aura3.frag), mas mais discreta: so o anel de 1 px (a
+// elite tem 2 px) e um pouco mais fraca, pulsando, enquanto o buff dura.
+// Desenhado sobre o framebuffer da criatura (useFramebuffer, 64x64 = 1/64 por
+// pixel), por isso pode pintar fora do sprite.
+const float px = 1.0 / 64.0;
+const vec3 auraColor = vec3(1.00, 0.30, 0.35);
+uniform float u_Time;
+uniform sampler2D u_Tex0;
+varying vec2 v_TexCoord;
+
+float alphaAt(vec2 d)
+{
+    return texture2D(u_Tex0, v_TexCoord + d * px).a;
+}
+
+void main()
+{
+    vec4 col = texture2D(u_Tex0, v_TexCoord);
+    if (col.a > 0.5) {
+        gl_FragColor = col;
+        return;
+    }
+    // so o anel de 1 px (vizinhos em cruz)
+    float inner = alphaAt(vec2(1.0, 0.0)) + alphaAt(vec2(-1.0, 0.0)) +
+                  alphaAt(vec2(0.0, 1.0)) + alphaAt(vec2(0.0, -1.0));
+    // pulso: 0.35 .. 0.80 de intensidade (a elite vai de 0.45 a 1.0)
+    float pulse = (sin(u_Time * 9.0) + 1.0) * 0.5;
+    float strength = 0.35 + 0.45 * pulse;
+    if (inner > 0.0) {
+        gl_FragColor = vec4(auraColor * strength, strength);
+    } else {
+        gl_FragColor = col;
+    }
+}

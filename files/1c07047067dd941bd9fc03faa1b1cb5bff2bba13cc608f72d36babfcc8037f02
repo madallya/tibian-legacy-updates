@@ -1,0 +1,7 @@
+Font
+  name: tibia-small
+  texture: tibia-small
+  height: 8
+  glyph-size: 8 8
+  spacing: 0 0
+  space-width: 2

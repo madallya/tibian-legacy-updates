@@ -1,0 +1,943 @@
+// Forge Anvil (comando 0xF8, servidor src/game/sigils.hh). Layout padrao Miracle do
+// rascunho claude/sigils-tela-forja-rascunho.md, so com pecas do cliente (decisao do dono,
+// 26/11: janela SEM bigorna). O unico efeito e o pulso de cor no slot do item (MORPH:
+// 12 quadros de 38 x 38 a 83 ms; vermelho na falha) com a borda dourada da tentativa.
+// Fase 2 (27/11, doc claude/profissoes-telmora.md v4, secao 12): abas Attune, Forge, Smelt,
+// Repair, Services e Salvage, no estilo das abas da Cyclopedia (Miracle). Attune, Services
+// e Salvage para qualquer jogador; Forge, Smelt e Repair so para o ferreiro. Sem a fase 2
+// no servidor (sem o sub 4) a linha de abas some e a janela fica como na fase 1.
+// O icone de cada aba e o desenho de um item ate o MORPH entregar os icones 34 x 34.
+
+Forge74Text < Label
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-auto-resize: true
+  phantom: true
+
+Forge74Muted < Forge74Text
+  color: #c0c0c0
+
+// casa 34 x 34 (item.png) com o item 32 x 32 dentro; a moldura de atributo troca a imagem
+Forge74Slot < Item
+  size: 34 34
+  padding: 1
+  image-source: /images/ui/item
+  virtual: true
+  focusable: false
+
+// 27/11 (dono): o slot grande com o fundo do item66 (66 x 66, sem esticar) e a moldura de atributo
+// por cima, so a borda (attr_frames com image-border): sem as listras do slot esticado
+Forge74BigSlot < Item
+  size: 66 66
+  padding: 1
+  image-source: /images/ui/item66
+  virtual: true
+  focusable: false
+
+  UIWidget
+    id: bigFrame
+    anchors.fill: parent
+    image-border: 7
+    phantom: true
+
+// um traco da borda dourada da tentativa (cor e tamanho pelo forge74.lua)
+Forge74Fx < UIWidget
+  background-color: #f2c94c
+  visible: false
+  phantom: true
+  focusable: false
+
+Forge74ListSlot < Forge74Slot
+  phantom: false
+
+  // borda clara do item escolhido (por cima da moldura de atributo), como na Cyclopedia
+  UIWidget
+    id: selection
+    anchors.fill: parent
+    border-width: 1
+    border-color: #dfdfdf
+    visible: false
+    phantom: true
+
+// 27/11 (dono): a lista do Smelt em linhas (desenho e nome da barra)
+Forge74ListRow < UIWidget
+  height: 38
+  focusable: false
+  background-color: alpha
+
+  Forge74Slot
+    id: slot
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 2
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: slot.right
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 8
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: true
+    height: 28
+    phantom: true
+
+  UIWidget
+    id: selection
+    anchors.fill: parent
+    border-width: 1
+    border-color: #dfdfdf
+    visible: false
+    phantom: true
+
+// moldura das secoes (Services): borda de 1 px em relevo, fundo um pouco mais escuro
+Forge74Box < UIWidget
+  background-color: #00000030
+  border-width: 1
+  border-color-top: #262626
+  border-color-left: #232323
+  border-color-bottom: #5c5c5c
+  border-color-right: #5c5c5c
+  phantom: true
+
+// aba no estilo da Cyclopedia (Miracle): moldura de 1 px em relevo; a ativa afundada
+Forge74Tab < UIButton
+  height: 36
+  width: 103
+  anchors.top: parent.top
+  anchors.left: prev.right
+  margin-left: -1
+  text-align: left
+  text-offset: 41 0
+  font: verdana-11px-monochrome
+  color: #dfdfdf
+  background-color: #00000026
+  border-width: 1
+  border-color-top: #6c6c6c
+  border-color-left: #626262
+  border-color-bottom: #262626
+  border-color-right: #232323
+  $checked:
+    margin-top: 1
+    height: 35
+    border-color-top: #262626
+    border-color-left: #232323
+    border-color-bottom: #656565
+    border-color-right: #666666
+  $disabled:
+    color: #dfdfdf66
+
+  UIItem
+    id: icon
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 2
+    size: 32 32
+    virtual: true
+    phantom: true
+
+  // desenho da aba (MORPH, 27/11): images/aba_<aba>.png 32x32, no lugar do item
+  UIWidget
+    id: art
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 2
+    size: 32 32
+    phantom: true
+
+// uma linha de material: a casa com o item, o nome e quanto tem / precisa
+Forge74MatRow < UIWidget
+  height: 36
+  phantom: true
+
+  Forge74Slot
+    id: slot
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+
+  Forge74Text
+    id: name
+    anchors.left: slot.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 8
+
+  Forge74Text
+    id: have
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+
+// uma linha de atributo do Services (clicar escolhe o atributo da Sigil Soul)
+Forge74AttrRow < UIWidget
+  height: 15
+  focusable: false
+  background-color: alpha
+
+  // 27/11 (dono): o circulo marca o atributo escolhido
+  UIWidget
+    id: radio
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 4
+    size: 12 12
+    image-source: /images/ui/checkboxcircle
+    image-clip: 0 0 12 12
+    phantom: true
+
+  Label
+    id: text
+    anchors.left: radio.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 5
+    font: verdana-11px-antialised
+    color: #c7c7c7
+    text-auto-resize: true
+    phantom: true
+
+MainWindow
+  id: forge74Window
+  !text: tr('Forge Anvil')
+  size: 660 478
+  visible: false
+  @onEscape: modules.game_forge74.closeByPlayer()
+
+  // ---------------------------------------------- as abas (so com a fase 2 no servidor)
+  UIWidget
+    id: tabBar
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 1
+    height: 36
+
+    Forge74Tab
+      id: tabAttune
+      anchors.left: parent.left
+      margin-left: 0
+      !text: tr('Attune')
+      @onClick: modules.game_forge74.showTab('attune')
+
+    Forge74Tab
+      id: tabForge
+      !text: tr('Forge')
+      @onClick: modules.game_forge74.showTab('forge')
+
+    Forge74Tab
+      id: tabSmelt
+      !text: tr('Smelt')
+      @onClick: modules.game_forge74.showTab('smelt')
+
+    Forge74Tab
+      id: tabRepair
+      !text: tr('Repair')
+      @onClick: modules.game_forge74.showTab('repair')
+
+    Forge74Tab
+      id: tabServices
+      !text: tr('Services')
+      @onClick: modules.game_forge74.showTab('services')
+
+    Forge74Tab
+      id: tabSalvage
+      !text: tr('Salvage')
+      @onClick: modules.game_forge74.showTab('salvage')
+
+    UIWidget
+      id: tabBarRest
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: tabSalvage.right
+      anchors.right: parent.right
+      background-color: #00000035
+      phantom: true
+
+  // ---------------------------------------------- esquerda: a lista da aba
+  ScrollablePanel
+    id: itemsPanel
+    anchors.top: tabBar.bottom
+    anchors.left: parent.left
+    margin-top: 6
+    size: 200 326
+    image-source: /images/ui/panel_flat
+    image-border: 1
+    padding: 5
+    vertical-scrollbar: itemsScroll
+    layout:
+      type: grid
+      cell-size: 34 34
+      cell-spacing: 5
+      num-columns: 5
+      flow: true
+
+  // 27/11 (dono): no Forge, no Smelt e no Repair a lista e em linhas (receitas fixas: desenho e nome)
+  ScrollablePanel
+    id: rowsPanel
+    anchors.top: itemsPanel.top
+    anchors.left: itemsPanel.left
+    anchors.right: itemsPanel.right
+    anchors.bottom: itemsPanel.bottom
+    padding: 5
+    image-source: /images/ui/panel_flat
+    image-border: 1
+    vertical-scrollbar: rowsScroll
+    visible: false
+    layout:
+      type: verticalBox
+      spacing: 3
+
+  VerticalScrollBar
+    id: rowsScroll
+    anchors.top: itemsPanel.top
+    anchors.bottom: itemsPanel.bottom
+    anchors.left: itemsPanel.right
+    step: 41
+    pixels-scroll: true
+    visible: false
+
+  // 27/11 (dono): no Salvage, sem lista: o slot fica no meio desta caixa e o jogador arrasta o item
+  UIWidget
+    id: salvageBox
+    anchors.top: itemsPanel.top
+    anchors.left: itemsPanel.left
+    anchors.right: itemsScroll.right
+    anchors.bottom: itemsPanel.bottom
+    image-source: /images/ui/panel_flat
+    image-border: 1
+    visible: false
+
+  Forge74BigSlot
+    id: salSlot
+    anchors.centerIn: salvageBox
+    visible: false
+
+  Label
+    id: salDrop
+    anchors.top: salvageBox.verticalCenter
+    anchors.left: salvageBox.left
+    anchors.right: salvageBox.right
+    margin-top: 42
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-align: center
+    text-wrap: true
+    height: 30
+    visible: false
+    phantom: true
+    !text: tr('Drag an item here.')
+
+  VerticalScrollBar
+    id: itemsScroll
+    anchors.top: itemsPanel.top
+    anchors.bottom: itemsPanel.bottom
+    anchors.left: itemsPanel.right
+    step: 39
+    pixels-scroll: true
+
+  Forge74Muted
+    id: itemsLabel
+    anchors.top: itemsPanel.bottom
+    anchors.left: itemsPanel.left
+    margin-top: 4
+    !text: tr('Equipment you carry')
+
+  // nao-ferreiro nas abas Forge, Smelt e Repair
+  Label
+    id: memberHint
+    anchors.top: itemsPanel.top
+    anchors.left: itemsScroll.right
+    anchors.right: parent.right
+    margin-top: 110
+    margin-left: 15
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-align: center
+    text-wrap: true
+    text-auto-resize: true
+    visible: false
+    phantom: true
+
+  // ---------------------------------------------- direita, em cima: o item escolhido
+  // 26/11 (dono): o item em destaque, num slot maior (70 x 70: o desenho em 2x), com o nome
+  // centralizado ao lado e os atributos embaixo. A borda dourada da tentativa corre em volta.
+  Forge74BigSlot
+    id: itemSlot
+    anchors.top: itemsPanel.top
+    anchors.left: itemsScroll.right
+    margin-top: 5
+    margin-left: 15
+
+  // o pulso de cor do MORPH, em 2x (38 x 38 -> 76 x 76, 3 px para fora do slot)
+  UIWidget
+    id: pulse
+    anchors.top: itemSlot.top
+    anchors.left: itemSlot.left
+    margin-top: -5
+    margin-left: -5
+    size: 76 76
+    visible: false
+    phantom: true
+
+  // a borda dourada da tentativa (forge74.lua, playForge): acende embaixo, sobe pelos 2 lados
+  // e fecha no meio do topo; 2 px, 3 px para fora do slot
+  Forge74Fx
+    id: fxBottom
+    anchors.bottom: itemSlot.bottom
+    anchors.horizontalCenter: itemSlot.horizontalCenter
+    margin-bottom: -3
+    size: 0 2
+
+  Forge74Fx
+    id: fxLeft
+    anchors.bottom: itemSlot.bottom
+    anchors.left: itemSlot.left
+    margin-bottom: -3
+    margin-left: -3
+    size: 2 0
+
+  Forge74Fx
+    id: fxRight
+    anchors.bottom: itemSlot.bottom
+    anchors.right: itemSlot.right
+    margin-bottom: -3
+    margin-right: -3
+    size: 2 0
+
+  Forge74Fx
+    id: fxTopL
+    anchors.top: itemSlot.top
+    anchors.left: itemSlot.left
+    margin-top: -3
+    margin-left: -3
+    size: 0 2
+
+  Forge74Fx
+    id: fxTopR
+    anchors.top: itemSlot.top
+    anchors.right: itemSlot.right
+    margin-top: -3
+    margin-right: -3
+    size: 0 2
+
+  // 27/11 (dono): a barra do Smelt (cada barra leva 1,5 s; o Smelt all repete)
+  UIWidget
+    id: channelBar
+    anchors.top: itemSlot.top
+    anchors.left: itemSlot.right
+    anchors.right: parent.right
+    margin-top: 3
+    margin-left: 8
+    height: 9
+    background-color: #00000066
+    border-width: 1
+    border-color: #5c5c5c
+    visible: false
+    phantom: true
+
+    UIWidget
+      id: channelFill
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      margin: 1
+      width: 0
+      background-color: #c8a03c
+      phantom: true
+
+  Label
+    id: itemName
+    anchors.left: itemSlot.right
+    anchors.right: parent.right
+    anchors.top: itemSlot.top
+    margin-left: 8
+    margin-top: 15
+    height: 16
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-align: center
+    phantom: true
+
+  // 27/11 (dono): a ficha do item (Atk/Def/Arm, peso e descricao), como no Look
+  Label
+    id: itemDesc
+    anchors.left: itemName.left
+    anchors.right: parent.right
+    anchors.top: itemName.bottom
+    anchors.bottom: itemSlot.bottom
+    margin-top: 1
+    font: verdana-11px-antialised
+    color: #b0b0b0
+    text-align: center
+    text-wrap: true
+    phantom: true
+
+  UIWidget
+    id: attrList
+    anchors.top: itemSlot.bottom
+    anchors.left: itemSlot.left
+    anchors.right: parent.right
+    margin-top: 6
+    height: 78
+    layout:
+      type: verticalBox
+      spacing: 0
+
+  HorizontalSeparator
+    id: sepSigil
+    anchors.top: attrList.bottom
+    anchors.left: itemSlot.left
+    anchors.right: parent.right
+    margin-top: 2
+
+  // ---------------------------------------------- Attune: o Sigil do slot e a proxima tentativa
+  UIWidget
+    id: attunePanel
+    anchors.top: sepSigil.bottom
+    anchors.left: itemSlot.left
+    anchors.right: parent.right
+    anchors.bottom: footSep2.top
+    phantom: true
+
+    Forge74Slot
+      id: sigilSlot
+      anchors.top: parent.top
+      anchors.left: parent.left
+      margin-top: 6
+
+    Forge74Text
+      id: sigilName
+      anchors.top: sigilSlot.top
+      anchors.left: sigilSlot.right
+      margin-left: 8
+      margin-top: 2
+
+    Forge74Text
+      id: sigilCount
+      anchors.top: sigilName.top
+      anchors.right: parent.right
+
+    Forge74Muted
+      id: sigilCracked
+      anchors.top: sigilName.bottom
+      anchors.left: sigilName.left
+      margin-top: 3
+
+    Forge74Text
+      id: nextLabel
+      anchors.top: sigilSlot.bottom
+      anchors.left: parent.left
+      margin-top: 6
+
+    Forge74Text
+      id: nextChance
+      anchors.top: nextLabel.top
+      anchors.right: parent.right
+
+    Forge74Text
+      id: feeLabel
+      anchors.top: nextLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+      !text: tr('Fee')
+
+    Forge74Text
+      id: feeValue
+      anchors.top: feeLabel.top
+      anchors.right: parent.right
+
+    Forge74Muted
+      id: goldLabel
+      anchors.top: feeLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+      !text: tr('Your gold')
+
+    Forge74Muted
+      id: goldValue
+      anchors.top: goldLabel.top
+      anchors.right: parent.right
+
+    // 27/11 (dono): a tentativa gasta tambem Iron Bars (sub 9; servidor com a fase 2)
+    Forge74Text
+      id: barsLabel
+      anchors.top: goldLabel.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      visible: false
+      !text: tr('Iron bars')
+
+    Forge74Text
+      id: barsValue
+      anchors.top: barsLabel.top
+      anchors.right: parent.right
+      visible: false
+
+    Forge74Muted
+      id: myBarsLabel
+      anchors.top: barsLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+      visible: false
+      !text: tr('Your iron bars')
+
+    Forge74Muted
+      id: myBarsValue
+      anchors.top: myBarsLabel.top
+      anchors.right: parent.right
+      visible: false
+
+  // ---------------------------------------------- Forge, Smelt e Repair: os materiais
+  UIWidget
+    id: recipePanel
+    anchors.top: sepSigil.bottom
+    anchors.left: itemSlot.left
+    anchors.right: parent.right
+    anchors.bottom: footSep2.top
+    visible: false
+    phantom: true
+
+    UIWidget
+      id: matList
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+      height: 108
+      phantom: true
+      layout:
+        type: verticalBox
+        spacing: 0
+
+    Forge74Text
+      id: rChanceLabel
+      anchors.top: matList.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      !text: tr('Chance')
+
+    Forge74Text
+      id: rChance
+      anchors.top: rChanceLabel.top
+      anchors.right: parent.right
+
+    Forge74Text
+      id: rFeeLabel
+      anchors.top: rChanceLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+      !text: tr('Fee')
+
+    Forge74Text
+      id: rFee
+      anchors.top: rFeeLabel.top
+      anchors.right: parent.right
+
+    Forge74Muted
+      id: rGoldLabel
+      anchors.top: rFeeLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+      !text: tr('Your gold')
+
+    Forge74Muted
+      id: rGold
+      anchors.top: rGoldLabel.top
+      anchors.right: parent.right
+
+    // 27/11 (dono): o primal catalyst e um botao com o desenho dele (apertado = usa)
+    UIWidget
+      id: catalystRow
+      anchors.top: rGoldLabel.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+      height: 36
+      phantom: true
+
+      Item
+        id: catalystButton
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        size: 34 34
+        padding: 1
+        image-source: /images/ui/item
+        virtual: true
+        focusable: false
+        phantom: false
+        @onClick: modules.game_forge74.toggleCatalyst()
+
+        // 27/11 (dono): quantos o jogador tem, no canto do icone
+        Label
+          id: catalystCount
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          margin-right: 2
+          margin-bottom: 1
+          font: verdana-11px-rounded
+          color: #ffffff
+          text-auto-resize: true
+          phantom: true
+
+      Label
+        id: catalystText
+        anchors.left: catalystButton.right
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        margin-left: 8
+        font: verdana-11px-antialised
+        color: #c0c0c0
+        text-wrap: true
+        height: 28
+        phantom: true
+
+  // ---------------------------------------------- Services: Void Sigil e Sigil Soul
+  // 27/11 (dono): cada um numa moldura, com o seu botao embaixo
+  UIWidget
+    id: servicesPanel
+    anchors.top: sepSigil.bottom
+    anchors.left: itemSlot.left
+    anchors.right: parent.right
+    anchors.bottom: footSep2.top
+    visible: false
+    phantom: true
+
+    Forge74Box
+      id: voidBox
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+      height: 80
+
+      Forge74MatRow
+        id: voidRow
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        margin-top: 2
+        margin-left: 4
+        margin-right: 6
+
+      Forge74Muted
+        id: voidInfo
+        anchors.top: voidRow.bottom
+        anchors.left: parent.left
+        margin-left: 6
+        !text: tr('Erases every attribute of the item.')
+
+      Forge74Text
+        id: voidFee
+        anchors.top: voidInfo.top
+        anchors.right: parent.right
+        margin-right: 6
+
+      Button
+        id: voidButton
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        margin-bottom: 4
+        margin-right: 6
+        width: 64
+        !text: tr('Void')
+        @onClick: modules.game_forge74.action2()
+
+    Forge74Box
+      id: soulBox
+      anchors.top: voidBox.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 6
+      height: 80
+
+      Forge74MatRow
+        id: soulRow
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        margin-top: 2
+        margin-left: 4
+        margin-right: 6
+
+      Forge74Muted
+        id: soulInfo
+        anchors.top: soulRow.bottom
+        anchors.left: parent.left
+        margin-left: 6
+        !text: tr('Rerolls the strength of the attribute chosen above.')
+
+      Forge74Text
+        id: soulFee
+        anchors.top: soulInfo.top
+        anchors.right: parent.right
+        margin-right: 6
+
+      Button
+        id: soulButton
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        margin-bottom: 4
+        margin-right: 6
+        width: 64
+        !text: tr('Reshape')
+        @onClick: modules.game_forge74.action()
+
+    Forge74Muted
+      id: sGold
+      anchors.top: soulBox.bottom
+      anchors.right: parent.right
+      margin-top: 6
+      margin-right: 6
+
+    Forge74Muted
+      id: sGoldLabel
+      anchors.top: sGold.top
+      anchors.left: parent.left
+      margin-left: 6
+      !text: tr('Your gold')
+
+  // ---------------------------------------------- Salvage (27/11, dono): o slot fica na caixa da esquerda
+  // (salvageBox/salSlot); aqui, a direita, o nome, os avisos e quanto scrap pode sair
+  UIWidget
+    id: salvagePanel
+    anchors.top: itemsPanel.top
+    anchors.left: itemsScroll.right
+    anchors.right: parent.right
+    anchors.bottom: footSep2.top
+    margin-left: 15
+    visible: false
+    phantom: true
+
+    Label
+      id: salName
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 5
+      height: 16
+      font: verdana-11px-antialised
+      color: #dfdfdf
+      phantom: true
+
+    Label
+      id: salDesc
+      anchors.top: salName.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 1
+      font: verdana-11px-antialised
+      color: #b0b0b0
+      text-wrap: true
+      text-auto-resize: true
+      phantom: true
+
+    UIWidget
+      id: salLines
+      anchors.top: salDesc.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 5
+      height: 100
+      phantom: true
+      layout:
+        type: verticalBox
+        spacing: 0
+
+    HorizontalSeparator
+      id: salSep
+      anchors.top: salLines.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+
+    Forge74MatRow
+      id: scrapRow
+      anchors.top: salSep.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 4
+
+    Forge74Text
+      id: salChanceLabel
+      anchors.top: scrapRow.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      !text: tr('Chance of more')
+
+    Forge74Text
+      id: salChance
+      anchors.top: salChanceLabel.top
+      anchors.right: parent.right
+
+    Forge74Muted
+      id: salSkill
+      anchors.top: salChanceLabel.bottom
+      anchors.left: parent.left
+      margin-top: 1
+
+    Label
+      id: salNote
+      anchors.top: salSkill.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      margin-top: 6
+      font: verdana-11px-antialised
+      color: #c0c0c0
+      text-wrap: true
+      text-auto-resize: true
+      phantom: true
+
+  // ---------------------------------------------- rodape (linha dupla, resultado, botoes)
+  HorizontalSeparator
+    id: footSep1
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 10
+
+  HorizontalSeparator
+    id: footSep2
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: footSep1.top
+    margin-bottom: 2
+
+  Button
+    id: closeButton
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    width: 64
+    !text: tr('Close')
+    @onClick: modules.game_forge74.closeByPlayer()
+
+  Button
+    id: attuneButton
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    width: 64
+    !text: tr('Attune')
+    @onClick: modules.game_forge74.action()
+
+  // o 2o botao (Smelt all no Smelt, Void no Services)
+  Button
+    id: action2Button
+    anchors.right: attuneButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    width: 64
+    visible: false
+    @onClick: modules.game_forge74.action2()
+
+  Label
+    id: resultLine
+    anchors.left: parent.left
+    anchors.right: action2Button.left
+    anchors.verticalCenter: closeButton.verticalCenter
+    margin-right: 8
+    height: 28
+    font: verdana-11px-antialised
+    color: #c0c0c0
+    text-align: left
+    // 26/11 (dono): o resultado inteiro (2 linhas), sem cortar o atributo
+    text-wrap: true
+    phantom: true

@@ -1,0 +1,446 @@
+BattleIcon < UIButton
+  size: 20 20
+  image-source: /images/options/button_empty
+  image-clip: 0 0 20 20
+  image-border: 3
+  checkable: true
+
+  $pressed:
+    image-clip: 20 0 20 20
+
+  $on:
+    image-clip: 20 0 20 20
+
+  $checked:
+    image-clip: 20 0 20 20
+
+  $active:
+    image-clip: 20 0 20 20
+
+  $hover !disabled:
+    image-color: #ffffffcc
+
+  $disabled:
+    image-color: #ffffff88
+
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+
+BattlePlayers < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-players
+
+BattleNPCs < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-npc
+
+BattleMonsters < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-monster
+
+BattleSkulls < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-skull
+
+BattleParty < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-party
+
+BattleKnights < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-knight
+
+BattlePaladins < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-paladin
+
+BattleDruids < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-druid
+
+BattleSorcerers < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-sorcerer
+
+BattleMonks < BattleIcon
+  @onSetup: |
+    if g_game.getFeature(GameVocationMonk) then
+      self:setVisible(true)
+    else
+      self:setVisible(false)
+    end
+  
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-monk
+
+BattleSummons < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-summon
+
+BattleMembersOwnGuild < BattleIcon
+  UIWidget
+    id: iconWidget
+    anchors.centerIn: parent
+    image-color: white
+    focusable: false
+    phantom: true
+    image-source: /images/game/battle/icon-battlelist-own-guild
+
+BattleFilter74 < UIButton
+  size: 20 20
+  image-source: /images/game/battle/filters74
+  checkable: true
+  @onCheckChange: |
+    local x = self.clipX or 0
+    self:setImageClip({ x = x, y = self:isChecked() and 20 or 0, width = 20, height = 20 })
+
+// lista de ordem do Miracle: borda escura de 1 px e setinha, sem caixa separada
+BattleCombo74PopupMenu < ComboBoxPopupMenu
+  image-source: /images/ui/popup74
+  image-clip: 0 0 32 32
+  image-border: 2
+  padding: 2
+
+BattleCombo74PopupMenuButton < ComboBoxPopupMenuButton
+  height: 20
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 6 0
+  margin: 0
+
+  $hover !disabled:
+    color: #ffffff
+    background-color: #ffffff1a
+
+BattleCombo74PopupScrollMenu < ComboBoxPopupScrollMenu
+  image-source: /images/ui/popup74
+  image-clip: 0 0 32 32
+  image-border: 2
+  padding: 2
+
+BattleCombo74PopupScrollMenuButton < ComboBoxPopupScrollMenuButton
+  height: 20
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 6 0
+
+  $hover !disabled:
+    color: #ffffff
+    background-color: #ffffff1a
+
+BattleCombo74 < ComboBox
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-align: left
+  text-offset: 6 1
+  &keepTextAlign: true
+  image-source: /images/ui/combobox74
+  image-border: 1
+  image-border-right: 16
+  image-clip: 0 0 40 22
+  $hover !disabled:
+    image-clip: 0 0 40 22
+  $on:
+    image-clip: 0 0 40 22
+  $checked:
+    image-clip: 0 0 40 22
+
+MiniWindow
+  id: battleWindow
+  height: 166
+  image-smooth: false
+  @onOpen: onOpen()
+  @onClose: onClose()
+  &save: true
+   
+  UIWidget
+    id: miniwindowIcon
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    margin-top: 2
+    margin-left: 4
+    image-source: /images/game/battle/icon-battlelist
+    image-rect: 0 0 12 12
+    image-smooth: false
+
+  Label
+    id: miniwindowTitle
+    anchors.top: miniwindowHeader.top
+    anchors.left: miniwindowHeader.left
+    anchors.right: miniwindowHeader.right
+    margin-top: 2
+    margin-left: 20
+    margin-right: 50
+    font: verdana-11px-monochrome
+    height: 13
+    color: #ffffffe7
+    !text: tr('Battle List')
+
+  // 7.4 (Miracle): 5 filtros (jogador, NPC, monstro, sem caveira, grupo);
+  // apertado = escondendo, botao afundado e mais escuro
+  Panel
+    id: filterPanel
+    margin-top: 21
+    anchors.top: parent.top
+    anchors.horizontalCenter: parent.horizontalCenter
+    margin-right: 15
+    height: 20
+    width: 120
+    layout:
+      type: horizontalBox
+      spacing: 5
+
+    BattleFilter74
+      id: hidePlayers
+      image-clip: 0 0 20 20
+      &clipX: 0
+      !tooltip: tr('Hide players')
+      @onClick: modules.game_battle.onFilterButtonClick(self)
+
+    BattleFilter74
+      id: hideNPCs
+      image-clip: 20 0 20 20
+      &clipX: 20
+      !tooltip: tr('Hide NPCs')
+      @onClick: modules.game_battle.onFilterButtonClick(self)
+
+    BattleFilter74
+      id: hideMonsters
+      image-clip: 40 0 20 20
+      &clipX: 40
+      !tooltip: tr('Hide monsters')
+      @onClick: modules.game_battle.onFilterButtonClick(self)
+
+    BattleFilter74
+      id: hideSkulls
+      image-clip: 60 0 20 20
+      &clipX: 60
+      !tooltip: tr('Hide non-skull players')
+      @onClick: modules.game_battle.onFilterButtonClick(self)
+
+    BattleFilter74
+      id: hideParty
+      image-clip: 80 0 20 20
+      &clipX: 80
+      !tooltip: tr('Hide party members')
+      @onClick: modules.game_battle.onFilterButtonClick(self)
+
+  // 7.4 (Miracle): ordem da lista logo abaixo dos filtros
+  Panel
+    id: sortPanel
+    height: 22
+    anchors.top: filterPanel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 5
+    margin-left: 8
+    margin-right: 22
+
+    BattleCombo74
+      id: sortType
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.horizontalCenter
+      height: 22
+      margin-right: -22
+      !tooltip: tr('Sort by')
+
+    BattleCombo74
+      id: sortOrder
+      anchors.top: parent.top
+      anchors.left: prev.right
+      anchors.right: parent.right
+      height: 22
+      margin-left: 3
+      !tooltip: tr('Sort order')
+
+  // linha que separa filtros e lista (escuro + claro) com a setinha do Miracle
+  // que esconde/mostra os filtros
+  HorizontalSeparator
+    id: HorizontalSeparator
+    anchors.top: sortPanel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-left: 3
+    margin-right: 18
+    margin-top: 12
+    height: 2
+
+  UIButton
+    id: filterToggle74
+    size: 21 11
+    anchors.bottom: HorizontalSeparator.top
+    anchors.horizontalCenter: HorizontalSeparator.horizontalCenter
+    image-source: /images/game/battle/filtertoggle74
+    image-clip: 0 0 21 11
+    !tooltip: tr('Hide filters')
+
+  MiniWindowContents
+    id: contentsPanel
+    anchors.top: HorizontalSeparator.bottom
+    margin-top: 4
+
+    Panel
+      id: battlePanel
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      margin-top: 5
+      padding-right: 5
+      layout:
+        type: verticalBox
+        fit-children: true
+
+    UIWidget
+      id: resizeIndicator
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      margin-bottom: 0
+      margin-left: 0
+      image-source: /images/ui/miniborder
+      image-smooth: false
+      focusable: false
+      margin-bottom: 0
+      margin-left: 0
+      image-source: /images/ui/miniborder
+      image-smooth: false
+      focusable: false
+    margin-bottom: 3
+    pixels-scroll: true
+    $!on:
+      width: 0
+
+BattleListMenuOption < ThickCheckBox
+  text-offset: 18 1
+  text-align: left
+  color: white
+  background-color: alpha
+  font: verdana-11px-rounded
+  padding: 3 6
+
+  $hover:
+    background-color: #ffffff1a
+
+  $disabled:
+    color: #c0c0c0ff
+
+BattleListMenuButton < UIButton
+  text-align: left
+  color: white
+  background-color: alpha
+  font: verdana-11px-rounded
+  padding: 3 6
+  margin-left: 5
+
+  $hover:
+    background-color: #ffffff1a
+
+  $disabled:
+    color: #c0c0c0ff
+
+BattleListSubMenu < PopupMenu
+  id: battleListSubMenu
+  width: 285
+
+  BattleListMenuButton
+    id: editBattleListName
+    !text: tr('Edit Name')
+
+  BattleListMenuButton
+    id: openNewBattleList
+    !text: tr('Open secondary battle list')
+
+  HorizontalSeparator
+    margin-top: 2
+    margin-bottom: 3
+
+  BattleListMenuOption
+    id: sortAscByDisplayTime
+    !text: tr('Sort Ascending by Display Time')
+
+  BattleListMenuOption
+    id: sortDescByDisplayTime
+    !text: tr('Sort Descending by Display Time')
+
+  BattleListMenuOption
+    id: sortAscByDistance
+    !text: tr('Sort Ascending by Distance')
+
+  BattleListMenuOption
+    id: sortDescByDistance
+    !text: tr('Sort Descending by Distance')
+
+  BattleListMenuOption
+    id: sortAscByHitPoints
+    !text: tr('Sort Ascending by %% Hit Points')
+
+  BattleListMenuOption
+    id: sortDescByHitPoints
+    !text: tr('Sort Descending by %% Hit Points')
+
+  BattleListMenuOption
+    id: sortAscByName
+    !text: tr('Sort Ascending by Name')
+
+  BattleListMenuOption
+    id: sortDescByName
+    !text: tr('Sort Descending by Name')

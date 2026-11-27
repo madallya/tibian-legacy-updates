@@ -1,0 +1,254 @@
+// Loja de outro jogador (comprador), no layout da janela "<nome>'s Shop" do Miracle
+// (prints de 10/11): busca em cima, grade dos itens, "Container items" do lote
+// escolhido, quadro do item (nome, quantidade, preço, peso, desenho e "buy"),
+// descrição (o look) à direita, ouro que se carrega e "Close" embaixo.
+// Fundos e molduras: os mesmos da Store (game_store74/images), medidos no Miracle.
+
+// (estilos das grades, casas e quadros: playershop74.otui)
+
+MainWindow
+  id: playerShop74Browse
+  !text: tr('Shop')
+  size: 412 428
+  visible: false
+  @onEscape: modules.game_playershop74.hideBrowse()
+
+  // ---------------------------------------------------------------- busca
+  Button
+    id: clearSearch
+    text: X
+    anchors.top: parent.top
+    anchors.right: parent.right
+    size: 18 18
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.clearSearch()
+
+  TextEdit
+    id: search
+    anchors.top: parent.top
+    anchors.right: clearSearch.left
+    margin-right: 5
+    size: 148 17
+    font: verdana-11px-antialised
+    max-length: 30
+    !placeholder: tr('Type to search')
+
+  PlayerShop74Label
+    id: searchLabel
+    !text: tr('Search:')
+    anchors.verticalCenter: search.verticalCenter
+    anchors.right: search.left
+    margin-right: 6
+    font: verdana-11px-antialised
+
+  // ---------------------------------------------------------------- itens
+  PlayerShop74GridBox
+    id: itemsBox
+    anchors.top: search.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 6
+    height: 118
+
+    VerticalScrollBar
+      id: itemsScroll
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 2
+      step: 36
+      pixels-scroll: true
+
+    PlayerShop74Grid
+      id: items
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: itemsScroll.left
+      margin: 2 0 2 2
+      vertical-scrollbar: itemsScroll
+
+  PlayerShop74Label
+    id: contentLabel
+    text-auto-resize: true
+    !text: tr('Container items')
+    anchors.top: itemsBox.bottom
+    anchors.left: parent.left
+    margin-top: 6
+    font: verdana-11px-antialised
+
+  PlayerShop74GridBox
+    id: contentBox
+    anchors.top: contentLabel.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 3
+    height: 80
+
+    VerticalScrollBar
+      id: contentScroll
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      margin: 2
+      step: 36
+      pixels-scroll: true
+
+    PlayerShop74Grid
+      id: content
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: contentScroll.left
+      margin: 2 0 2 2
+      vertical-scrollbar: contentScroll
+
+  // ---------------------------------------------------------------- item escolhido
+  PlayerShop74Box
+    id: infoBox
+    anchors.top: contentBox.bottom
+    anchors.left: parent.left
+    margin-top: 6
+    size: 190 104
+
+    PlayerShop74Label
+      id: name
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: preview.left
+      margin-top: 6
+      margin-left: 7
+      margin-right: 4
+      font: verdana-11px-antialised
+      text-auto-resize: false
+
+    HorizontalScrollBar
+      id: amountScroll
+      anchors.top: name.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      margin-left: 7
+      width: 120
+      minimum: 1
+      maximum: 1
+      value: 1
+      step: 1
+
+    PlayerShop74Label
+      id: amountLabel
+      text-auto-resize: true
+      anchors.top: amountScroll.bottom
+      anchors.left: parent.left
+      margin-top: 4
+      margin-left: 7
+      font: verdana-11px-antialised
+
+    PlayerShop74Label
+      id: priceLabel
+      text-auto-resize: true
+      anchors.top: amountLabel.bottom
+      anchors.left: parent.left
+      margin-top: 2
+      margin-left: 7
+      font: verdana-11px-antialised
+
+    UIWidget
+      id: priceCoin
+      anchors.left: priceLabel.right
+      anchors.verticalCenter: priceLabel.verticalCenter
+      margin-left: 3
+      size: 9 9
+      image-source: /images/game/cyclopedia/icons/icon-goldcoin
+      phantom: true
+
+    PlayerShop74Label
+      id: weightLabel
+      text-auto-resize: true
+      anchors.top: priceLabel.bottom
+      anchors.left: parent.left
+      margin-top: 2
+      margin-left: 7
+      font: verdana-11px-antialised
+
+    Item
+      id: preview
+      anchors.top: parent.top
+      anchors.right: parent.right
+      margin-top: 18
+      margin-right: 5
+      size: 50 50
+      virtual: true
+      phantom: true
+
+    Button
+      id: buyButton
+      !text: tr('buy')
+      anchors.top: preview.bottom
+      anchors.left: preview.left
+      anchors.right: preview.right
+      margin-top: 3
+      height: 18
+      font: verdana-11px-antialised
+      @onClick: modules.game_playershop74.buySelected()
+
+  // descrição: o look do item escolhido
+  PlayerShop74Box
+    id: descBox
+    anchors.top: infoBox.top
+    anchors.left: infoBox.right
+    anchors.right: parent.right
+    anchors.bottom: infoBox.bottom
+    margin-left: 4
+
+    PlayerShop74Label
+      id: description
+      anchors.fill: parent
+      margin: 6 7 4 7
+      font: verdana-11px-antialised
+      text-wrap: true
+      text-align: topLeft
+      text-auto-resize: false
+
+  HorizontalSeparator
+    id: separator
+    anchors.top: infoBox.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 6
+
+  // ---------------------------------------------------------------- ouro e fechar
+  UIWidget
+    id: goldBox
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    size: 128 18
+    image-source: /game_playershop74/images/inset_dark
+    image-border: 1
+
+    UIWidget
+      id: coin
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 5
+      size: 9 9
+      image-source: /images/game/cyclopedia/icons/icon-goldcoin
+      phantom: true
+
+    PlayerShop74Label
+      id: value
+      anchors.left: parent.left
+      anchors.right: coin.left
+      anchors.verticalCenter: parent.verticalCenter
+      margin-right: 4
+      text-align: right
+      font: verdana-11px-antialised
+      text: 0
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    size: 64 20
+    font: verdana-11px-antialised
+    @onClick: modules.game_playershop74.hideBrowse()

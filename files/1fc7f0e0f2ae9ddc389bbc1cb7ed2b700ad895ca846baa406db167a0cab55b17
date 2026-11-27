@@ -1,0 +1,177 @@
+// Quest Log no estilo do cliente do Miracle: lista das quests começadas e, ao
+// abrir uma ("Show"), as missões com a marca de feita.
+
+QuestLog74Row < Label
+  height: 15
+  font: verdana-11px-antialised
+  color: #dfdfdf
+  text-offset: 4 1
+  text-wrap: false
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #6d6d6d
+    color: #ffffff
+
+QuestLine74Row < UIWidget
+  height: 16
+  focusable: true
+  background-color: alpha
+  $focus:
+    background-color: #6d6d6d
+
+  UIWidget
+    id: check
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 3
+    size: 12 12
+    phantom: true
+
+  Label
+    id: name
+    anchors.left: check.right
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    margin-left: 5
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: false
+    phantom: true
+
+// lista de cima mais clara que o texto de baixo, como no Miracle
+QuestLog74List < TextList
+  background-color: #484848
+  border-width: 1
+  border-color: #262626
+  padding: 1
+  focusable: false
+
+MainWindow
+  id: questLog74Window
+  !text: tr('Quest Log')
+  size: 395 400
+  visible: false
+  @onEscape: modules.game_questlog74.hide()
+
+  // a barra pelo id: o "next" nao existe no UIScrollArea (a lista ficava sem
+  // barra ligada e a barra aparecia sempre, com o cursor no meio)
+  QuestLog74List
+    id: questList
+    vertical-scrollbar: questScroll
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: questScroll.left
+    anchors.bottom: bottomSeparator.top
+    margin-bottom: 8
+
+  VerticalScrollBar
+    id: questScroll
+    anchors.top: parent.top
+    anchors.bottom: bottomSeparator.top
+    anchors.right: parent.right
+    margin-bottom: 8
+    step: 15
+    pixels-scroll: true
+    // como no Miracle: a barra fica sempre; o cursor so aparece quando a lista
+    // nao cabe
+    auto-hide: true
+
+  Label
+    id: emptyLabel
+    anchors.centerIn: questList
+    font: verdana-11px-antialised
+    color: #9d9d9d
+    text-auto-resize: true
+    phantom: true
+
+  // missões da quest aberta ("Show")
+  QuestLog74List
+    id: missionList
+    vertical-scrollbar: missionScroll
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: missionScroll.left
+    height: 150
+    visible: false
+
+  VerticalScrollBar
+    id: missionScroll
+    anchors.top: parent.top
+    anchors.right: parent.right
+    height: 150
+    step: 16
+    pixels-scroll: true
+    visible: false
+    auto-hide: true
+
+  // caixa do texto da missao; o texto fica num Label por dentro com margem
+  // (no Label o padding nao afasta o texto da borda: a quebra de linha usa a
+  // largura inteira e o texto saia em cima da moldura)
+  UIWidget
+    id: missionBox
+    anchors.top: missionList.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: bottomSeparator.top
+    margin-top: 8
+    margin-bottom: 8
+    image-source: /images/ui/textedit
+    image-border: 1
+    background-color: #565656
+    visible: false
+
+  Label
+    id: missionText
+    anchors.fill: missionBox
+    margin: 5 7 5 7
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    text-wrap: true
+    text-align: topLeft
+    phantom: true
+    visible: false
+
+  HorizontalSeparator
+    id: bottomSeparator
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: closeButton.top
+    margin-bottom: 8
+
+  Button
+    id: trackerButton
+    !text: tr('Quest Tracker (button)')
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    width: 90
+    // so abre o tracker; acompanhar uma quest e pela caixa "Track Quest"
+    @onClick: modules.game_questlog74.openTracker()
+
+  CheckBox
+    id: trackCheck
+    !text: tr('Track Quest')
+    anchors.left: trackerButton.right
+    anchors.verticalCenter: trackerButton.verticalCenter
+    margin-left: 10
+    width: 100
+    font: verdana-11px-antialised
+    color: #dfdfdf
+    @onCheckChange: modules.game_questlog74.onTrackCheck(self:isChecked())
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    width: 64
+    @onClick: modules.game_questlog74.hide()
+
+  Button
+    id: showButton
+    !text: tr('Show')
+    anchors.right: closeButton.left
+    anchors.bottom: parent.bottom
+    margin-right: 6
+    width: 64
+    @onClick: modules.game_questlog74.toggleShow()

@@ -1,0 +1,62 @@
+// OTServ 7.4: minimapa no estilo do cliente do Miracle: mapa largo, com os
+// botões do próprio Minimap (Center, andar acima/abaixo e zoom) por cima.
+// layersPanel e rosePanel continuam existindo (o minimap.lua usa), escondidos.
+PhantomMiniWindow
+  id: mainmappanel
+  draggable: true
+  phantom: false
+  // 7.4 (Miracle): o minimapa pode ir para qualquer coluna (pegue pela moldura)
+  &moveOnlyToMain: false
+  &anyPanel: true
+  &panelHeight: 152
+  height: 152
+
+  UIWidget
+    id: minimapBorder
+    anchors.top: parent.top
+    anchors.left: parent.left
+    anchors.right: parent.right
+    margin-top: 4
+    margin-left: 7
+    margin-right: 10
+    height: 142
+    image-source: /images/ui/1pixel_down_frame
+    image-border: 1
+    phantom: true
+
+    Minimap
+      id: minimap
+      anchors.fill: parent
+      margin: 1
+
+  UIWidget
+    id: layersPanel
+    size: 0 0
+    visible: false
+    phantom: true
+
+    UIWidget
+      id: automapLayers
+      size: 0 0
+
+    UIWidget
+      id: layersMark
+      size: 0 0
+
+  UIWidget
+    id: rosePanel
+    size: 0 0
+    visible: false
+    phantom: true
+
+    UIWidget
+      id: ambients
+      size: 0 0
+
+      UIWidget
+        id: main
+        size: 0 0
+
+      UIWidget
+        id: secondary
+        size: 0 0

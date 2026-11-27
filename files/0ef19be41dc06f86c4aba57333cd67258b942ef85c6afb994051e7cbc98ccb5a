@@ -1,0 +1,1272 @@
+-- Forge Anvil do Telmora. Tudo vem do servidor pelo comando 0xF8 (protocolo em
+-- src/game/sigils.hh do servidor); aqui so se mostra e se pede. O servidor sorteia e
+-- grava na hora do pedido; o pulso de cor no slot e so visual e mostra o resultado que
+-- ja chegou. Enquanto o pedido esta no ar e o pulso toca, os botoes ficam desligados
+-- (um 2o clique nao manda nada; o servidor tambem ignora).
+-- Layout padrao Miracle, sem bigorna (dono, 26/11; doc claude/sigils-tela-forja-rascunho.md).
+-- Pulso do MORPH: 12 quadros de 38 x 38 a 83 ms, na cor da moldura nova (sucesso) ou
+-- vermelho (falha); no fim do sucesso a moldura do slot fica na cor nova.
+-- Fase 2 (27/11; doc claude/profissoes-telmora.md v4): hello versao 2 e as abas Forge, Smelt,
+-- Repair, Services e Salvage (sub 4 do servidor) e as barras de Blacksmithing e Mining na
+-- janela de Skills (sub 5). Servidor sem a fase 2: so a aba Attune, como antes.
+
+local OPCODE = 0xF8
+local VERSION = 3 -- 3 (27/11): o servidor manda as Iron Bars do Attune (sub 9)
+local PULSE_FRAMES = 12
+local PULSE_MS = 83
+local WAIT_MS = 4000 -- sem resposta do servidor: libera o botao
+
+local RED = '#d33c3c'
+local OK_COLOR = '#dfdfdf'
+-- 26/11 (VEX): textos inteiros para o tr() (o ordinal muda com a lingua)
+local ORDINAL = { '1st attribute', '2nd attribute', '3rd attribute', '4th attribute', '5th attribute' }
+-- cor do pulso pelo numero de atributos depois do sucesso (attr_frames: 1 cinza ... 5 dourado)
+local PULSE_COLOR = { 'cinza', 'verde', 'azul', 'roxo', 'dourado' }
+local NEW_ATTR_COLOR = { '#d0d0d0', '#3ddc4a', '#3fb6f0', '#d58be0', '#f2e04a' }
+
+-- abas: a aba do protocolo (sub 4) e se e so do ferreiro
+local TABS = { 'attune', 'forge', 'smelt', 'repair', 'services', 'salvage' }
+local TAB_ID = { attune = 'tabAttune', forge = 'tabForge', smelt = 'tabSmelt', repair = 'tabRepair',
+    services = 'tabServices', salvage = 'tabSalvage' }
+local RECIPE_TAB = { forge = 1, smelt = 2, repair = 3 }
+local SMITH_ONLY = { forge = true, smelt = true, repair = true }
+local LIST_LABEL = { attune = 'Equipment you carry', forge = 'Recipes', smelt = 'Bars',
+    repair = 'Cracked sigils', services = 'Items with 3 or more attributes', salvage = 'Items you can salvage' }
+local ACTION_TEXT = { attune = 'Attune', forge = 'Forge', smelt = 'Smelt', repair = 'Repair',
+    services = 'Reshape', salvage = 'Salvage' }
+
+local window
+local state        -- o ultimo estado do servidor (sub 1)
+local shop         -- a oficina (sub 4); nil = servidor sem a fase 2
+local attuneBars   -- Iron Bars do Attune (sub 9): { id, have, need = {5} }; nil = o servidor nao cobra
+local tab = 'attune'
+local sel = {}     -- o escolhido de cada aba (serie ou codigo)
+local selAttr      -- Services: o atributo escolhido para a Sigil Soul (1..)
+local busy = false -- pedido no ar ou pulso tocando
+local pendingState, pendingShop
+local events = {}
+local resultText, resultColor = '', '#c0c0c0'
+local newAttrText  -- atributo que acabou de pegar (fica colorido na lista)
+local newAttrColor -- 27/11 (dono): no Reshape, verde se o atributo subiu, vermelho se desceu
+local confirmBox
+local skills       -- sub 5: { member, bs, bsPct, mn, mnPct }
+local fichas = {}  -- sub 7 (27/11): serie -> { text = ficha do item, attrs = { ... } }
+local useCat = false -- 27/11 (dono): o botao do primal catalyst (apertado = usa)
+local channel      -- 27/11 (dono): o Smelt em andamento { code, left, t0 }
+local CHANNEL_MS, CHANNEL_STEP = 1500, 50
+local GOOD = '#5fd35f' -- resultado bom na linha de baixo (27/11, dono); o ruim e o RED
+
+-- ------------------------------------------------------------------ utilidades
+local function child(id)
+    return window and window:recursiveGetChildById(id) or nil
+end
+
+local function send(fill)
+    local protocol = g_game.getProtocolGame()
+    if not protocol or not g_game.isOnline() then return false end
+    local msg = OutputMessage.create()
+    msg:addU8(OPCODE)
+    fill(msg)
+    protocol:send(msg)
+    return true
+end
+
+local function fmt(n)
+    local s = tostring(math.floor(n or 0))
+    local out = s:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+    return (out:gsub('^,', ''))
+end
+
+local function pct(c)
+    local v = (c or 0) / 100
+    if v == math.floor(v) then return tostring(math.floor(v)) .. '%' end
+    return string.format('%.1f%%', v)
+end
+
+local function titleCase(s)
+    return (s:gsub('(%a)([%w\']*)', function(a, b) return a:upper() .. b end))
+end
+
+local function later(ms, fn)
+    local e = scheduleEvent(fn, ms)
+    table.insert(events, e)
+    return e
+end
+
+local function closeBox()
+    if confirmBox then confirmBox:destroy(); confirmBox = nil end
+end
+
+local function stopEvents()
+    for _, e in ipairs(events) do removeEvent(e) end
+    events = {}
+    local p = child('pulse')
+    if p then p:setVisible(false) end
+    local slot = child('salSlot')
+    if slot then
+        slot:setMarginLeft(0); slot:setMarginTop(0); slot:setOpacity(1)
+    end
+    channel = nil
+    local bar = child('channelBar')
+    if bar then bar:setVisible(false) end
+    for _, id in ipairs({ 'fxBottom', 'fxLeft', 'fxRight', 'fxTopL', 'fxTopR' }) do
+        local w = child(id)
+        if w then w:setVisible(false) end
+    end
+end
+
+local function setFrame(widget, n)
+    if ItemsDatabase and ItemsDatabase.setAttrFrame then
+        -- 27/11 (dono): no slot grande a moldura vai no widget de cima (so a borda, sem esticar o fundo)
+        local big = widget.getChildById and widget:getChildById('bigFrame') or nil
+        ItemsDatabase.setAttrFrame(big or widget, n)
+    end
+end
+
+local function setCount(widget, n)
+    widget:setItemCount(math.max(1, n or 1))
+    if widget.setShowCount then widget:setShowCount((n or 0) > 1) end
+end
+
+local function isMember()
+    return shop and (shop.member % 2 == 1) or false
+end
+
+local function byKey(list, key, value)
+    if not list or value == nil then return nil end
+    for i, it in ipairs(list) do
+        if it[key] == value then return i, it end
+    end
+    return nil
+end
+
+local function recipesOf(t)
+    local out = {}
+    if not shop then return out end
+    for _, r in ipairs(shop.recipes) do
+        if r.tab == RECIPE_TAB[t] then table.insert(out, r) end
+    end
+    return out
+end
+
+-- a lista da esquerda de cada aba: { id, frame, dim, count, tip, key }
+local function listOf(t)
+    local out = {}
+    if t == 'attune' then
+        for _, it in ipairs(state and state.items or {}) do
+            local n = #it.attrs
+            table.insert(out, { id = it.id, frame = math.min(n, 5), dim = (n >= it.class or n >= 5), key = it.serial,
+                tip = titleCase(it.name) .. (n > 0 and ('\n' .. table.concat(it.attrs, '\n')) or '') })
+        end
+    elseif RECIPE_TAB[t] then
+        for _, r in ipairs(recipesOf(t)) do
+            local e = { id = r.product, frame = 0, key = r.code, tip = titleCase(r.name) }
+            -- 27/11 (dono): apagada quando falta skill, material ou ouro (no Repair tambem: so o
+            -- trincado nao basta)
+            local ok = shop.level >= r.skill and (state and state.gold or 0) >= r.fee
+            for _, m in ipairs(r.mats) do if m.have < m.need then ok = false end end
+            e.dim = not ok
+            if t == 'repair' then
+                local m = r.mats[1]
+                e.id, e.count = m.id, m.have
+                e.tip = titleCase(m.name)
+            elseif t == 'smelt' and r.code == 1 then
+                e.tip = tr('%s (with metal scrap)', titleCase(r.name))
+            end
+            e.order = #out
+            table.insert(out, e)
+        end
+        -- 27/11 (dono): primeiro o que da para fazer agora (com tudo), na ordem de sempre
+        table.sort(out, function(a, b)
+            if (a.dim and true or false) ~= (b.dim and true or false) then return not a.dim end
+            return a.order < b.order
+        end)
+    elseif t == 'services' then
+        for _, it in ipairs(shop and shop.services or {}) do
+            table.insert(out, { id = it.id, frame = math.min(#it.attrs, 5), key = it.serial,
+                tip = titleCase(it.name) .. '\n' .. table.concat(it.attrs, '\n') })
+        end
+    elseif t == 'salvage' then
+        for _, it in ipairs(shop and shop.salvage or {}) do
+            table.insert(out, { id = it.id, frame = math.min(it.attrs, 5), key = it.serial, dim = it.npc,
+                tip = titleCase(it.name) })
+        end
+    end
+    return out
+end
+
+-- ------------------------------------------------------------------ desenho
+local function fillList(entries)
+    local panel = child('itemsPanel')
+    local kids = panel:getChildren()
+    for i, e in ipairs(entries) do
+        local w = kids[i]
+        if not w then w = g_ui.createWidget('Forge74ListSlot', panel) end
+        w:setItemId(e.id)
+        setCount(w, e.count)
+        w:setTooltip(e.tip)
+        setFrame(w, e.frame or 0)
+        w:setOpacity(e.dim and 0.45 or 1)
+        w:getChildById('selection'):setVisible(e.key == sel[tab])
+        local key = e.key
+        w.onClick = function()
+            if busy then return end
+            if tab == 'salvage' then
+                resultText, resultColor = tr('Drag the item from your inventory into the slot.'), '#c0c0c0'
+                modules.game_forge74.refreshView()
+                return
+            end
+            sel[tab] = key
+            selAttr = nil
+            resultText, resultColor, newAttrText = '', '#c0c0c0', nil
+            modules.game_forge74.refreshView()
+        end
+    end
+    for i = #entries + 1, #kids do kids[i]:destroy() end
+end
+
+-- 27/11 (dono): a lista do Smelt em linhas, com o desenho e o nome da barra
+local function fillRows(entries)
+    local panel = child('rowsPanel')
+    local kids = panel:getChildren()
+    for i, e in ipairs(entries) do
+        local w = kids[i]
+        if not w then w = g_ui.createWidget('Forge74ListRow', panel) end
+        w:getChildById('slot'):setItemId(e.id)
+        setCount(w:getChildById('slot'), e.count)
+        w:getChildById('name'):setText(e.tip)
+        w:setOpacity(e.dim and 0.45 or 1)
+        w:getChildById('selection'):setVisible(e.key == sel[tab])
+        local key = e.key
+        w.onClick = function()
+            if busy or channel then return end
+            sel[tab] = key
+            resultText, resultColor, newAttrText = '', '#c0c0c0', nil
+            modules.game_forge74.refreshView()
+        end
+    end
+    for i = #entries + 1, #kids do kids[i]:destroy() end
+end
+
+-- 27/11 (dono): as 6 abas com o mesmo tamanho, preenchendo a linha, com o desenho e o nome no meio
+function layoutTabs()
+    local bar = child('tabBar')
+    if not bar or not bar:isVisible() then return end
+    local total = bar:getWidth()
+    if total <= 0 then return end
+    local n = #TABS
+    -- cada aba encosta na anterior com 2 px por cima (anchors.left: prev.right = x + w - 1, e margin-left -1)
+    local OV = 2
+    local w = math.floor((total + OV * (n - 1)) / n)
+    local used = 0
+    for i, t in ipairs(TABS) do
+        local tw = (i < n) and w or (total + OV * (n - 1) - used)
+        local b = child(TAB_ID[t])
+        b:setWidth(tw)
+        used = used + tw
+        local textW = 0
+        local ok, size = pcall(function() return b:getTextSize() end)
+        if ok and size and size.width then textW = size.width end
+        local left = math.max(2, math.floor((tw - (32 + 5 + textW)) / 2))
+        local art = b:getChildById('art')
+        if art then art:setMarginLeft(left) end
+        b:setTextOffset({ x = left + 37, y = 0 })
+    end
+    local rest = child('tabBarRest')
+    if rest then rest:setVisible(false) end
+end
+
+local function setMat(row, id, name, need, have)
+    row:getChildById('slot'):setItemId(id or 0)
+    row:getChildById('name'):setText(name or '')
+    local h = row:getChildById('have')
+    -- o nome ja diz quanto precisa ("4x Iron Bar"); aqui so quanto tem, em vermelho se falta
+    h:setText(have and tr('You have %s', fmt(have)) or '')
+    h:setColor((have and have < (need or 1)) and RED or '#c0c0c0')
+end
+
+local function showPanels()
+    child('attunePanel'):setVisible(tab == 'attune')
+    child('recipePanel'):setVisible(RECIPE_TAB[tab] ~= nil)
+    child('servicesPanel'):setVisible(tab == 'services')
+    child('salvagePanel'):setVisible(tab == 'salvage')
+end
+
+local function setAction2(text)
+    local b = child('action2Button')
+    if text then
+        b:setText(text); b:setVisible(true); b:setWidth(64); b:setMarginRight(6)
+    else
+        b:setVisible(false); b:setWidth(0); b:setMarginRight(0)
+    end
+end
+
+-- 27/11 (dono): no Services os atributos ficam numa moldura funda; nas outras abas, sem moldura
+local function attrFrame(on)
+    local list = child('attrList')
+    if on then
+        list:setBackgroundColor('#00000055')
+        list:setBorderWidth(1)
+        list:setBorderColorTop('#1a1a1a'); list:setBorderColorLeft('#1a1a1a')
+        list:setBorderColorBottom('#5c5c5c'); list:setBorderColorRight('#5c5c5c')
+        list:setPadding(1)
+    else
+        list:setBackgroundColor('alpha')
+        list:setBorderWidth(0)
+        list:setPadding(0)
+    end
+end
+
+local function attrLines(lines, color, highlight)
+    local list = child('attrList')
+    attrFrame(false)
+    list:destroyChildren()
+    for _, l in ipairs(lines) do
+        local w = g_ui.createWidget(l.muted and 'Forge74Muted' or 'Forge74Text', list)
+        w:setText(l.text)
+        if l.color then w:setColor(l.color) end
+    end
+end
+
+-- Attune (fase 1) -----------------------------------------------------------
+local function refreshAttune()
+    local idx = byKey(state.items, 'serial', sel.attune)
+    local cur = idx and state.items[idx] or nil
+    local n = cur and #cur.attrs or 0
+    local full = cur and (n >= cur.class or n >= 5) or false
+
+    local slot = child('itemSlot')
+    slot:setItemId(cur and cur.id or 0)
+    setFrame(slot, cur and math.min(n, 5) or 0)
+    child('itemName'):setText(cur and titleCase(cur.name) or '')
+    child('itemDesc'):setText(cur and fichas[cur.serial] and fichas[cur.serial].text or '')
+    local lines = {}
+    if cur then
+        for _, a in ipairs(cur.attrs) do
+            table.insert(lines, { text = a, color = (a == newAttrText) and NEW_ATTR_COLOR[math.max(1, math.min(n, 5))] or '#c7c7c7' })
+        end
+    else
+        table.insert(lines, { text = tr('Choose a piece of equipment.'), muted = true })
+    end
+    attrLines(lines)
+
+    -- o Sigil do slot (a janela escolhe; o jogador nao)
+    local sg = cur and state.sigils[cur.slot + 1] or nil
+    local sigilSlot = child('sigilSlot')
+    if sg then
+        -- 26/11 (dono): so o que a tentativa gasta ("1x Mantle Sigil"), sem a quantidade da
+        -- mochila; sem Sigil inteiro o desenho continua no slot, apagado (indisponivel)
+        child('sigilName'):setText('1x ' .. sg.name)
+        child('sigilCount'):setText('')
+        sigilSlot:setItemId(sg.id)
+        sigilSlot:setOpacity(sg.whole > 0 and 1.0 or 0.35)
+        child('sigilCracked'):setText(sg.cracked > 0 and tr('%d cracked: repair at a smith', sg.cracked) or '')
+    else
+        child('sigilName'):setText('')
+        child('sigilCount'):setText('')
+        sigilSlot:setItemId(0)
+        sigilSlot:setOpacity(1.0)
+        child('sigilCracked'):setText('')
+    end
+
+    local step = (cur and not full) and state.table[n + 1] or nil
+    local payable = step and state.gold >= step.fee or false
+    child('nextLabel'):setText(step and tr(ORDINAL[n + 1]) or '')
+    child('nextChance'):setText(step and (tr('Chance') .. ' ' .. (step.chance / 100) .. '%') or '')
+    child('feeLabel'):setVisible(step ~= nil)
+    child('feeValue'):setText(step and tr('%s gold', fmt(step.fee)) or '')
+    child('feeValue'):setColor(payable and OK_COLOR or RED)
+    child('goldValue'):setText(fmt(state.gold))
+    -- 27/11: as Iron Bars da tentativa (so quando o servidor cobra)
+    local needBars = (step and attuneBars) and (attuneBars.need[n + 1] or 0) or 0
+    local hasBars = attuneBars == nil or attuneBars.have >= needBars
+    local showBars = attuneBars ~= nil and needBars > 0
+    for _, id in ipairs({ 'barsLabel', 'barsValue', 'myBarsLabel', 'myBarsValue' }) do child(id):setVisible(showBars) end
+    if showBars then
+        child('barsValue'):setText(fmt(needBars))
+        child('barsValue'):setColor(hasBars and OK_COLOR or RED)
+        child('myBarsValue'):setText(fmt(attuneBars.have))
+    end
+
+    local can = cur and not busy and not full and sg and sg.whole > 0 and payable and hasBars
+    local hint = ''
+    if not cur then hint = tr('Choose a piece of equipment.')
+    elseif full then hint = tr('This item cannot hold more attributes.')
+    elseif sg and sg.whole == 0 then hint = tr('You have no whole %s.', sg.name:lower())
+    elseif not payable then hint = tr('You do not have enough gold.')
+    elseif not hasBars then hint = tr('You need %d iron bars for this attempt.', needBars) end
+    return can, hint
+end
+
+-- Forge, Smelt e Repair -----------------------------------------------------
+local function refreshRecipe()
+    local list = recipesOf(tab)
+    local _, r = byKey(list, 'code', sel[tab])
+    local slot = child('itemSlot')
+    slot:setItemId(r and r.product or 0)
+    setFrame(slot, 0)
+    child('itemName'):setText(r and titleCase(r.name) or '')
+    child('itemDesc'):setText('')
+    local lines = {}
+    local skillOk = r and shop.level >= r.skill
+    if r then
+        table.insert(lines, { text = tr('Requires blacksmithing %d', r.skill), color = skillOk and '#c0c0c0' or RED })
+        table.insert(lines, { text = tr('Your blacksmithing: %d', shop.level), muted = true })
+        if tab == 'repair' then
+            table.insert(lines, { text = tr('On failure the cracked sigil is kept.'), muted = true })
+        elseif tab == 'forge' then
+            table.insert(lines, { text = tr('On failure the materials are lost.'), muted = true })
+        else
+            table.insert(lines, { text = tr('Smelting always succeeds.'), muted = true })
+        end
+    else
+        table.insert(lines, { text = tr('Choose a recipe.'), muted = true })
+    end
+    attrLines(lines)
+
+    local mats = child('matList')
+    mats:destroyChildren()
+    local matsOk = r ~= nil
+    if r then
+        for _, m in ipairs(r.mats) do
+            local row = g_ui.createWidget('Forge74MatRow', mats)
+            setMat(row, m.id, string.format('%dx %s', m.need, titleCase(m.name)), m.need, m.have)
+            if m.have < m.need then matsOk = false end
+        end
+    end
+
+    local row = child('catalystRow')
+    local catOn = false
+    if r and r.chanceCat ~= 0xFFFF then
+        row:setVisible(true)
+        if shop.catalysts == 0 then useCat = false end
+        catOn = useCat
+        local btn = child('catalystButton')
+        btn:setItemId(shop.catalystId)
+        btn:setOpacity(catOn and 1 or 0.45)
+        child('catalystCount'):setText(tostring(shop.catalysts))
+        btn:setBorderWidth(catOn and 1 or 0)
+        btn:setBorderColor('#f2c94c')
+        local bonus = pct(r.chanceCat - r.chance)
+        btn:setTooltip(tr('Use a primal catalyst (+%s). Consumes 1.', bonus))
+        child('catalystText'):setText(tr('Use a primal catalyst (+%s). Consumes 1.', bonus))
+        child('catalystText'):setColor(catOn and '#f2c94c' or '#c0c0c0')
+    else
+        row:setVisible(false)
+    end
+    local chance = r and (catOn and r.chanceCat or r.chance) or nil
+    child('rChanceLabel'):setVisible(r ~= nil)
+    child('rChance'):setText(chance and pct(chance) or '')
+    child('rFeeLabel'):setVisible(r ~= nil and r.fee > 0)
+    child('rFee'):setText((r and r.fee > 0) and tr('%s gold', fmt(r.fee)) or '')
+    local payable = not r or state.gold >= r.fee
+    child('rFee'):setColor(payable and OK_COLOR or RED)
+    child('rGoldLabel'):setVisible(r ~= nil and r.fee > 0)
+    child('rGold'):setText((r and r.fee > 0) and fmt(state.gold) or '')
+
+    local can = r and not busy and isMember() and skillOk and matsOk and payable
+    local hint = ''
+    if not r then hint = tr('Choose a recipe.')
+    elseif not skillOk then hint = tr('You need blacksmithing %d.', r.skill)
+    elseif not matsOk then hint = tr('You do not have all the materials.')
+    elseif not payable then hint = tr('You do not have enough gold.') end
+    if tab == 'smelt' then setAction2(tr('Smelt all')) else setAction2(nil) end
+    child('action2Button'):setEnabled(can and true or false)
+    return can, hint
+end
+
+-- Services ------------------------------------------------------------------
+local function soulFee(n)
+    return shop.soulFee[math.max(1, math.min(n, 5) - 2)] or 0
+end
+
+local function refreshServices()
+    local _, cur = byKey(shop.services, 'serial', sel.services)
+    local n = cur and #cur.attrs or 0
+    local slot = child('itemSlot')
+    slot:setItemId(cur and cur.id or 0)
+    setFrame(slot, cur and math.min(n, 5) or 0)
+    child('itemName'):setText(cur and titleCase(cur.name) or '')
+    child('itemDesc'):setText(cur and fichas[cur.serial] and fichas[cur.serial].text or '')
+
+    -- os atributos: clicar escolhe o que a Sigil Soul vai mudar
+    local list = child('attrList')
+    list:destroyChildren()
+    attrFrame(true)
+    if cur then
+        for i, a in ipairs(cur.attrs) do
+            local row = g_ui.createWidget('Forge74AttrRow', list)
+            local chosen = (i == selAttr)
+            row:getChildById('text'):setText(a)
+            row:getChildById('text'):setColor((a == newAttrText) and (newAttrColor or '#f2e04a') or (chosen and '#ffffff' or '#c7c7c7'))
+            row:getChildById('radio'):setImageClip(chosen and '0 12 12 12' or '0 0 12 12')
+            row:setBackgroundColor(chosen and '#ffffff26' or ((i % 2 == 0) and '#ffffff0d' or 'alpha'))
+            row.onClick = function()
+                if busy then return end
+                selAttr = (selAttr == i) and nil or i
+                resultText, newAttrText = '', nil
+                modules.game_forge74.refreshView()
+            end
+        end
+    else
+        local w = g_ui.createWidget('Forge74Muted', list)
+        w:setText(#shop.services == 0 and tr('Items with 3 or more attributes appear here.') or tr('Choose an item.'))
+    end
+
+    setMat(child('voidRow'), shop.voidId, 'Void Sigil', nil, shop.voids)
+    setMat(child('soulRow'), shop.soulId, 'Sigil Soul', nil, shop.souls)
+    child('voidRow'):getChildById('slot'):setOpacity(shop.voids > 0 and 1 or 0.35)
+    child('soulRow'):getChildById('slot'):setOpacity(shop.souls > 0 and 1 or 0.35)
+    local fs = cur and soulFee(n) or shop.soulFee[1]
+    child('voidFee'):setText(tr('%s gold', fmt(shop.voidFee)))
+    child('voidFee'):setColor(state.gold >= shop.voidFee and OK_COLOR or RED)
+    child('soulFee'):setText(cur and tr('%s gold', fmt(fs)) or
+        tr('%s / %s / %s gold', fmt(shop.soulFee[1]), fmt(shop.soulFee[2]), fmt(shop.soulFee[3])))
+    child('soulFee'):setColor((not cur or state.gold >= fs) and OK_COLOR or RED)
+    child('sGold'):setText(fmt(state.gold))
+
+    local canVoid = cur and not busy and shop.voids > 0 and state.gold >= shop.voidFee
+    local canSoul = cur and not busy and selAttr and shop.souls > 0 and state.gold >= fs
+    setAction2(nil)
+    child('voidButton'):setEnabled(canVoid and true or false)
+    child('soulButton'):setEnabled(canSoul and true or false)
+    local hint = ''
+    if not cur then hint = (#shop.services == 0) and tr('Items with 3 or more attributes appear here.') or tr('Choose an item.')
+    elseif not selAttr then hint = tr('Choose the attribute the sigil soul will reshape.')
+    elseif shop.souls == 0 then hint = tr('You have no sigil soul.')
+    elseif state.gold < fs then hint = tr('You do not have enough gold.') end
+    return canSoul, hint
+end
+
+-- Salvage -------------------------------------------------------------------
+local function refreshSalvage()
+    local _, cur = byKey(shop.salvage, 'serial', sel.salvage)
+    if not cur then sel.salvage = nil end
+    local slot = child('salSlot')
+    local lines = child('salLines')
+    lines:destroyChildren()
+    local function line(text, color, muted)
+        local w = g_ui.createWidget(muted and 'Forge74Muted' or 'Forge74Text', lines)
+        w:setText(text)
+        if color then w:setColor(color) end
+    end
+    if not busy then
+        slot:setItemId(cur and cur.id or 0)
+        setCount(slot, 1)
+        setFrame(slot, cur and math.min(cur.attrs, 5) or 0)
+    end
+    child('salDrop'):setVisible(not cur and not busy)
+    child('salName'):setText(cur and titleCase(cur.name) or '')
+    local f = cur and fichas[cur.serial] or nil
+    child('salDesc'):setText(f and f.text or '')
+    if cur then
+        if cur.npc then
+            line(tr('This item was bought from a merchant and cannot be salvaged.'), RED)
+        else
+            -- 27/11 (dono): os atributos do item por completo; o aviso de que se perdem, so embaixo
+            for _, a in ipairs(f and f.attrs or {}) do line(a) end
+            if cur.attrs > 0 then line(tr('Its %d attributes are lost.', cur.attrs), RED) end
+            if cur.equipped then line(tr('You are wearing this item.'), nil, true) end
+        end
+    elseif #shop.salvage == 0 then
+        line(tr('You carry nothing that can be salvaged.'), nil, true)
+    end
+    local scrapText = 'Metal Scrap'
+    if cur and not cur.npc then scrapText = string.format('%d-%d %s', cur.min or cur.scrap, cur.scrap, 'Metal Scrap') end
+    setMat(child('scrapRow'), shop.scrapId, scrapText, nil, nil)
+    child('salChance'):setText(pct(shop.salvageChance))
+    child('salSkill'):setText(tr('Your blacksmithing: %d', shop.level))
+    child('salNote'):setText(tr('The minimum always comes. Your blacksmithing raises the chance of each extra scrap.'))
+    setAction2(nil)
+    local can = cur and not busy and not cur.npc
+    local hint = ''
+    if not cur then hint = #shop.salvage == 0 and tr('You carry nothing that can be salvaged.') or tr('Drag the item from your inventory into the slot.')
+    elseif cur.npc then hint = tr('This item was bought from a merchant and cannot be salvaged.') end
+    return can, hint
+end
+
+local function setTabIconsFromShop()
+    -- 27/11: as abas tem o desenho do MORPH (setTabIcons); nada a trocar pela oficina
+end
+
+local function refresh()
+    if not window or not state then return end
+    setTabIconsFromShop()
+    -- abas (so com a oficina do servidor)
+    local bar = child('tabBar')
+    bar:setVisible(shop ~= nil)
+    bar:setHeight(shop and 36 or 0)
+    if not shop and tab ~= 'attune' then tab = 'attune' end
+    for _, t in ipairs(TABS) do
+        local b = child(TAB_ID[t])
+        b:setChecked(t == tab)
+        -- 27/11 (dono): as abas do ferreiro ficam apagadas para quem nao e
+        local locked = SMITH_ONLY[t] and shop and not isMember()
+        b:setOpacity(locked and 0.45 or 1)
+    end
+    child('itemsLabel'):setText(tr(LIST_LABEL[tab]))
+    showPanels()
+
+    local smithLocked = SMITH_ONLY[tab] and not isMember()
+    local hintW = child('memberHint')
+    hintW:setVisible(smithLocked)
+    if smithLocked then
+        hintW:setText(tr('Only blacksmiths can use this. Reach blacksmithing %d by salvaging items and join the profession with Brokk in Kazordoon or Sigrun in Edron.', 20))
+    end
+    -- 27/11 (dono): Salvage sem lista (o slot fica na caixa da esquerda); Smelt com a lista em linhas
+    local isSal, isRows = (tab == 'salvage'), (RECIPE_TAB[tab] ~= nil)
+    child('itemsPanel'):setVisible(not isSal and not isRows)
+    child('itemsScroll'):setVisible(not isSal and not isRows)
+    child('rowsPanel'):setVisible(isRows)
+    child('rowsScroll'):setVisible(isRows)
+    child('itemsLabel'):setVisible(not isSal)
+    child('salvageBox'):setVisible(isSal)
+    child('salSlot'):setVisible(isSal)
+    if not isSal then child('salDrop'):setVisible(false) end
+    for _, id in ipairs({ 'itemSlot', 'itemName', 'itemDesc', 'attrList', 'sepSigil' }) do child(id):setVisible(not smithLocked and not isSal) end
+    if smithLocked then
+        child('recipePanel'):setVisible(false)
+        setAction2(nil)
+    end
+
+    if isRows then fillRows(listOf(tab)) else fillList(listOf(tab)) end
+
+    local can, hint
+    if tab == 'attune' then can, hint = refreshAttune(); setAction2(nil)
+    elseif RECIPE_TAB[tab] then can, hint = refreshRecipe()
+    elseif tab == 'services' then can, hint = refreshServices()
+    else can, hint = refreshSalvage() end
+    if smithLocked then can, hint = false, '' end
+
+    local btn = child('attuneButton')
+    btn:setText(tr(ACTION_TEXT[tab]))
+    btn:setEnabled(can and true or false)
+    if channel and tab == 'smelt' then
+        btn:setText(tr('Stop')); btn:setEnabled(true)
+        child('action2Button'):setEnabled(false)
+    end
+    -- no Services cada runa tem o seu botao na moldura
+    btn:setVisible(tab ~= 'services')
+    layoutTabs()
+    local line = child('resultLine')
+    if channel and tab == 'smelt' and resultText == '' then
+        line:setText(tr('Smelting... %d left', channel.left)); line:setColor('#c0c0c0')
+    elseif resultText ~= '' then
+        line:setText(resultText); line:setColor(resultColor)
+    else
+        line:setText(hint or ''); line:setColor('#c0c0c0')
+    end
+end
+
+-- ------------------------------------------------------------------ a borda dourada (so visual)
+-- 26/11 (dono): na tentativa, uma borda dourada acende embaixo do item, sobe pelos 2 lados e
+-- fecha no meio do topo; ali brilha (pisca claro/dourado) e fica na cor do resultado (a cor
+-- do novo atributo no sucesso, vermelho na falha), com o pulso do MORPH em 2x por cima.
+local FX = { 'fxBottom', 'fxLeft', 'fxRight', 'fxTopL', 'fxTopR' }
+local GOLD, FLASH = '#f2c94c', '#fff4c8'
+local FX_STEP = 20 -- ms por quadro da borda
+
+local function fxSet(color, visible)
+    for _, id in ipairs(FX) do
+        local w = child(id)
+        if w then
+            if color then w:setBackgroundColor(color) end
+            if visible ~= nil then w:setVisible(visible) end
+        end
+    end
+end
+
+local function playForge(color, finalColor, onEnd)
+    local full = child('itemSlot'):getWidth() + 6 -- a borda fica 3 px para fora
+    local half = math.ceil(full / 2)
+    child('fxBottom'):setWidth(0)
+    child('fxLeft'):setHeight(0)
+    child('fxRight'):setHeight(0)
+    child('fxTopL'):setWidth(0)
+    child('fxTopR'):setWidth(0)
+    fxSet(GOLD, true)
+    for _, id in ipairs(FX) do child(id):raise() end
+    local t = 0
+    -- 1) acende embaixo, do meio para os cantos
+    for k = 1, 5 do
+        later(t + k * FX_STEP, function() child('fxBottom'):setWidth(math.floor(full * k / 5)) end)
+    end
+    t = t + 5 * FX_STEP
+    -- 2) sobe pelos 2 lados
+    local up = 20
+    for k = 1, up do
+        later(t + k * FX_STEP, function()
+            local h = math.floor(full * k / up)
+            child('fxLeft'):setHeight(h)
+            child('fxRight'):setHeight(h)
+        end)
+    end
+    t = t + up * FX_STEP
+    -- 3) fecha no topo, dos cantos para o meio
+    local top = 10
+    for k = 1, top do
+        later(t + k * FX_STEP, function()
+            local w = math.floor(half * k / top)
+            child('fxTopL'):setWidth(w)
+            child('fxTopR'):setWidth(w)
+        end)
+    end
+    t = t + top * FX_STEP
+    -- 4) juntou no meio: brilha (pisca claro / dourado)
+    for k = 1, 6 do
+        later(t + k * 80, function() fxSet((k % 2 == 1) and FLASH or GOLD) end)
+    end
+    t = t + 6 * 80
+    -- 5) a cor do resultado e o pulso do MORPH (2x) por cima
+    later(t, function()
+        fxSet(finalColor)
+        local p = child('pulse')
+        p:setImageSource('/game_forge74/images/pulso_' .. color .. '_1')
+        p:setVisible(true)
+        p:raise()
+    end)
+    for k = 2, PULSE_FRAMES do
+        later(t + (k - 1) * PULSE_MS, function()
+            child('pulse'):setImageSource('/game_forge74/images/pulso_' .. color .. '_' .. k)
+        end)
+    end
+    later(t + PULSE_FRAMES * PULSE_MS + 150, function()
+        child('pulse'):setVisible(false)
+        fxSet(nil, false)
+        if onEnd then onEnd() end
+    end)
+end
+
+-- 27/11 (dono): a quebra. O item treme no slot; no sucesso o Metal Scrap aparece no mesmo slot
+-- com fade; na falha o item some (fade) e o slot fica vazio.
+local SHAKE = { 3, -3, 2, -3, 3, -2, 2, -2, 1, -1, 0 }
+local SHAKE_MS, FADE_STEPS, FADE_MS, SHOW_MS = 45, 10, 45, 1500
+
+function playSalvage(amount, onEnd)
+    local slot = child('salSlot')
+    local t = 0
+    -- 27/11 (dono): so o slot treme (nada fica preso a ele)
+    for k, o in ipairs(SHAKE) do
+        later(t + k * SHAKE_MS, function()
+            slot:setMarginLeft(o)
+            slot:setMarginTop(((k % 2 == 0) and 1 or -1) * math.min(math.abs(o), 1))
+        end)
+    end
+    t = t + #SHAKE * SHAKE_MS
+    later(t, function() slot:setMarginLeft(0); slot:setMarginTop(0) end)
+    -- o Metal Scrap aparece no mesmo slot (fade), fica um tempo e some (fade)
+    later(t + 20, function()
+        slot:setOpacity(0)
+        setFrame(slot, 0)
+        if amount > 0 then
+            slot:setItemId(shop and shop.scrapId or 0)
+            setCount(slot, amount)
+        else
+            slot:setItemId(0)
+        end
+    end)
+    for k = 1, FADE_STEPS do
+        later(t + 20 + k * FADE_MS, function() slot:setOpacity(k / FADE_STEPS) end)
+    end
+    t = t + 20 + FADE_STEPS * FADE_MS + SHOW_MS
+    for k = 1, FADE_STEPS do
+        later(t + k * FADE_MS, function() slot:setOpacity(1 - k / FADE_STEPS) end)
+    end
+    later(t + (FADE_STEPS + 1) * FADE_MS, function()
+        slot:setItemId(0); setCount(slot, 1); slot:setOpacity(1)
+        if onEnd then onEnd() end
+    end)
+end
+
+local function applyPending()
+    if pendingState then state = pendingState; pendingState = nil end
+    if pendingShop then shop = pendingShop; pendingShop = nil end
+end
+
+-- o que a tentativa pediu (para a cor do pulso e o atributo novo)
+local lastAction
+
+local function onResult(r)
+    local ch = channel
+    stopEvents()
+    -- 27/11 (dono): o resultado aparece embaixo so no fim da animacao, verde no sucesso e vermelho na falha
+    resultText, resultColor = '', '#c0c0c0'
+    newAttrText = nil
+    if not r.tried then
+        -- recusado: nada foi gasto
+        resultText, resultColor = r.msg, RED
+        busy = false
+        applyPending()
+        refresh()
+        return
+    end
+    -- o item ainda com a moldura antiga enquanto o pulso toca; no fim, o estado novo.
+    -- busy de novo: o resultado pode chegar depois dos WAIT_MS (K-20261126-5 do VEX); sem isso o
+    -- botao fica ligado durante o pulso e o estado novo entra antes do fim
+    busy = true
+    local act = lastAction or { tab = 'attune' }
+    local color, finalColor
+    if act.tab == 'attune' then
+        local _, cur = byKey(state.items, 'serial', sel.attune)
+        local n = cur and #cur.attrs or 0
+        color = r.success and PULSE_COLOR[math.min(n + 1, 5)] or 'falha'
+        finalColor = r.success and NEW_ATTR_COLOR[math.min(n + 1, 5)] or RED
+    else
+        color = r.success and 'verde' or 'falha'
+        finalColor = r.success and NEW_ATTR_COLOR[2] or RED
+        if act.tab == 'services' and act.void then color, finalColor = 'cinza', NEW_ATTR_COLOR[1] end
+        -- 27/11 (dono): Reshape - o indice diz se o atributo subiu (1), desceu (2) ou ficou igual (0)
+        if act.tab == 'services' and act.attr and r.success then
+            if r.index == 1 then color, finalColor = 'verde', GOOD
+            elseif r.index == 2 then color, finalColor = 'falha', RED
+            else color, finalColor = 'cinza', '#dfdfdf' end
+        end
+    end
+    refresh()
+    local function done()
+        busy = false
+        applyPending()
+        resultText, resultColor = r.msg, r.success and GOOD or RED
+        newAttrColor = nil
+        if act.tab == 'services' and act.attr and r.success then
+            resultColor = (r.index == 1) and GOOD or ((r.index == 2) and RED or '#dfdfdf')
+            newAttrColor = resultColor
+        end
+        if act.tab == 'attune' and r.success then
+            local _, c2 = byKey(state.items, 'serial', sel.attune)
+            if c2 then newAttrText = c2.attrs[#c2.attrs] end
+        elseif act.tab == 'services' and r.success and act.attr then
+            local _, c2 = byKey(shop and shop.services or {}, 'serial', sel.services)
+            if c2 then newAttrText = c2.attrs[act.attr] end
+            if not c2 then sel.services, selAttr = nil, nil end
+        end
+        refresh()
+    end
+    -- Smelt nunca falha: sem a borda dourada; no Smelt all a proxima barra comeca sozinha
+    if act.tab == 'smelt' then
+        done()
+        if ch and ch.left > 1 and tab == 'smelt' and sel.smelt == ch.code and window:isVisible() then
+            startChannel(ch.code, ch.left - 1)
+        end
+    elseif act.tab == 'salvage' then
+        -- 27/11: no Salvage o indice da resposta e quanto scrap saiu
+        playSalvage(r.index or 0, function()
+            sel.salvage = nil
+            done()
+        end)
+    else
+        playForge(color, finalColor, done)
+    end
+end
+
+-- ------------------------------------------------------------------ servidor
+local function readState(msg)
+    local st = { items = {}, sigils = {}, table = {} }
+    st.open = msg:getU8() == 1
+    for _ = 1, msg:getU8() do
+        local it = { id = msg:getU16(), name = msg:getString(), class = msg:getU8(), slot = msg:getU8(),
+            equipped = msg:getU8() == 1, serial = msg:getU32(), attrs = {} }
+        for _ = 1, msg:getU8() do table.insert(it.attrs, msg:getString()) end
+        table.insert(st.items, it)
+    end
+    for _ = 1, 7 do
+        table.insert(st.sigils, { id = msg:getU16(), name = msg:getString(), whole = msg:getU16(), cracked = msg:getU16() })
+    end
+    st.gold = msg:getU32()
+    for _ = 1, 5 do
+        table.insert(st.table, { chance = msg:getU16(), fee = msg:getU32() })
+    end
+    return st
+end
+
+local function readShop(msg)
+    local sh = { recipes = {}, services = {}, salvage = {}, soulFee = {} }
+    sh.member = msg:getU8()
+    sh.level = msg:getU8()
+    sh.catalystId = msg:getU16()
+    sh.catalysts = msg:getU16()
+    for _ = 1, msg:getU8() do
+        local r = { tab = msg:getU8(), code = msg:getU8(), product = msg:getU16(), name = msg:getString(),
+            skill = msg:getU8(), chance = msg:getU16(), chanceCat = msg:getU16(), fee = msg:getU32(), mats = {} }
+        for _ = 1, msg:getU8() do
+            table.insert(r.mats, { id = msg:getU16(), name = msg:getString(), need = msg:getU16(), have = msg:getU16() })
+        end
+        table.insert(sh.recipes, r)
+    end
+    sh.voidId = msg:getU16(); sh.voids = msg:getU16(); sh.voidFee = msg:getU32()
+    sh.soulId = msg:getU16(); sh.souls = msg:getU16()
+    for i = 1, 3 do sh.soulFee[i] = msg:getU32() end
+    for _ = 1, msg:getU8() do
+        local it = { id = msg:getU16(), name = msg:getString(), serial = msg:getU32(), attrs = {} }
+        for _ = 1, msg:getU8() do table.insert(it.attrs, msg:getString()) end
+        table.insert(sh.services, it)
+    end
+    sh.scrapId = msg:getU16()
+    sh.salvageChance = msg:getU16()
+    for _ = 1, msg:getU8() do
+        table.insert(sh.salvage, { id = msg:getU16(), name = msg:getString(), serial = msg:getU32(), attrs = msg:getU8(),
+            scrap = msg:getU16(), min = msg:getU16(), equipped = msg:getU8() == 1, npc = msg:getU8() == 1 })
+    end
+    return sh
+end
+
+local function hideWindow()
+    stopEvents()
+    closeBox()
+    busy, pendingState, pendingShop = false, nil, nil
+    if window then window:hide() end
+end
+
+-- barras de Blacksmithing e Mining na janela de Skills (modules/game_skills)
+local function pushSkills()
+    local sk = modules.game_skills
+    if sk and sk.setProfessions then sk.setProfessions(skills) end
+end
+
+local function onForge(protocol, msg)
+    local sub = msg:getU8()
+    if sub == 1 then
+        local st = readState(msg)
+        if st.open then
+            stopEvents()
+            closeBox()
+            busy, pendingState, pendingShop = false, nil, nil
+            state = st
+            shop = nil -- o sub 4 vem logo depois (com a fase 2)
+            sel = {}
+            selAttr = nil
+            tab = 'attune'
+            resultText, resultColor, newAttrText = '', '#c0c0c0', nil
+            refresh()
+            window:show()
+            window:raise()
+            window:focus()
+        elseif busy then
+            pendingState = st -- aplicado no fim do pulso
+        else
+            state = st
+            refresh()
+        end
+    elseif sub == 2 then
+        onResult({ tried = msg:getU8() == 1, success = msg:getU8() == 1, index = msg:getU8(), msg = msg:getString() })
+    elseif sub == 3 then
+        msg:getString() -- o motivo tambem vai para o console (mensagem do servidor)
+        hideWindow()
+    elseif sub == 4 then
+        local sh = readShop(msg)
+        if busy then pendingShop = sh else shop = sh; refresh() end
+    elseif sub == 5 then
+        skills = { member = msg:getU8(), bs = msg:getU8(), bsPct = msg:getU8(), mn = msg:getU8(), mnPct = msg:getU8() }
+        pushSkills()
+    elseif sub == 6 then
+        onSalvageDropped(msg:getU8(), msg:getString())
+    elseif sub == 9 then
+        local b = { id = msg:getU16(), have = msg:getU16(), need = {} }
+        for i = 1, 5 do b.need[i] = msg:getU16() end
+        attuneBars = b
+        if not busy then refresh() end
+    elseif sub == 7 then
+        local f = {}
+        for _ = 1, msg:getU8() do
+            local serial = msg:getU32()
+            local e = { text = msg:getString(), attrs = {} }
+            for _ = 1, msg:getU8() do table.insert(e.attrs, msg:getString()) end
+            f[serial] = e
+        end
+        fichas = f
+        if not busy then refresh() end
+    end
+end
+
+-- ------------------------------------------------------------------ acoes
+local function waitAnswer()
+    busy = true
+    resultText, newAttrText = '', nil
+    refresh()
+    -- se a resposta nao vier (queda), o botao volta
+    later(WAIT_MS, function() if busy then busy = false; refresh() end end)
+end
+
+-- 27/11 (dono): cada barra leva 1,5 s (a barra sobe ao lado do item). So no fim o pedido vai ao
+-- servidor; fechar a forja, trocar de aba ou apertar Stop antes nao faz a barra nem gasta material.
+local function smeltable(r)
+    local n = 1000
+    for _, m in ipairs(r.mats) do n = math.min(n, math.floor(m.have / m.need)) end
+    return n
+end
+
+function startChannel(code, left)
+    local _, r = byKey(recipesOf('smelt'), 'code', code)
+    if not r or smeltable(r) < 1 or shop.level < r.skill then channel = nil; refresh(); return end
+    left = math.min(left, smeltable(r))
+    channel = { code = code, left = left }
+    local bar, fill = child('channelBar'), child('channelFill')
+    bar:setVisible(true); bar:raise()
+    local full = bar:getWidth() - 2
+    fill:setWidth(0)
+    resultText = ''
+    refresh()
+    local my = channel
+    local steps = math.floor(CHANNEL_MS / CHANNEL_STEP)
+    for k = 1, steps do
+        later(k * CHANNEL_STEP, function()
+            if channel ~= my then return end
+            fill:setWidth(math.floor(full * k / steps))
+            if k == steps then
+                local ok = send(function(msg)
+                    msg:addU8(4); msg:addU8(RECIPE_TAB.smelt); msg:addU8(code); msg:addU8(0); msg:addU8(1)
+                end)
+                if ok then lastAction = { tab = 'smelt' }; waitAnswer() else channel = nil; bar:setVisible(false); refresh() end
+            end
+        end)
+    end
+end
+
+function stopChannel()
+    if not channel then return end
+    stopEvents()
+    busy = false
+    resultText, resultColor = tr('Smelting stopped.'), '#c0c0c0'
+    refresh()
+end
+
+local function sendRecipe(times)
+    local _, r = byKey(recipesOf(tab), 'code', sel[tab])
+    if not r then return end
+    local cat = (r.chanceCat ~= 0xFFFF) and useCat and shop.catalysts > 0
+    local ok = send(function(msg)
+        msg:addU8(4); msg:addU8(RECIPE_TAB[tab]); msg:addU8(r.code); msg:addU8(cat and 1 or 0); msg:addU8(times)
+    end)
+    if ok then lastAction = { tab = tab }; waitAnswer() end
+end
+
+local function sendItem(sub, list, key, extra)
+    local idx, it = byKey(list, 'serial', key)
+    if not it then return end
+    local ok = send(function(msg)
+        msg:addU8(sub); msg:addU8(idx - 1); msg:addU16(it.id); msg:addU32(it.serial)
+        if extra then msg:addU8(extra) end
+    end)
+    return ok
+end
+
+local function confirm(title, text, yes)
+    closeBox()
+    local function no() closeBox() end
+    local function ok() closeBox(); yes() end
+    confirmBox = displayGeneralBox(title, text, { { text = tr('No'), callback = no }, { text = tr('Yes'), callback = ok } }, ok, no)
+end
+
+function action()
+    if tab == 'smelt' and channel then stopChannel(); return end
+    if busy or not state then return end
+    local btnId = (tab == 'services') and 'soulButton' or 'attuneButton'
+    if not child(btnId):isEnabled() then return end
+    if tab == 'attune' then
+        local idx, it = byKey(state.items, 'serial', sel.attune)
+        if not it then return end
+        local ok = send(function(msg)
+            msg:addU8(2); msg:addU8(idx - 1); msg:addU16(it.id); msg:addU32(it.serial)
+        end)
+        if ok then lastAction = { tab = 'attune' }; waitAnswer() end
+    elseif tab == 'smelt' then
+        if channel then stopChannel() else startChannel(sel.smelt, 1) end
+    elseif RECIPE_TAB[tab] then
+        sendRecipe(1)
+    elseif tab == 'services' then
+        local attr = selAttr
+        if sendItem(7, shop.services, sel.services, attr - 1) then
+            lastAction = { tab = 'services', attr = attr }; waitAnswer()
+        end
+    elseif tab == 'salvage' then
+        askSalvage()
+    end
+end
+
+-- 27/11 (dono): a quebra sempre pede confirmacao
+function askSalvage()
+    if busy or not shop or tab ~= 'salvage' then return end
+    local _, it = byKey(shop.salvage, 'serial', sel.salvage)
+    if not it or it.npc then return end
+    local key = sel.salvage
+    local text = tr('Salvage your %s? You get %d to %d metal scrap.', titleCase(it.name), it.min or it.scrap, it.scrap)
+    if it.attrs > 0 then text = text .. '\n' .. tr('Its %d attributes are lost.', it.attrs) end
+    if it.equipped then text = text .. '\n' .. tr('You are wearing this item.') end
+    confirm(tr('Salvage'), text, function()
+        if busy or tab ~= 'salvage' or sel.salvage ~= key then return end
+        if sendItem(5, shop.salvage, key) then lastAction = { tab = 'salvage', scrap = it.scrap }; waitAnswer() end
+    end)
+end
+
+-- o item arrastado para o slot do Salvage: o servidor diz qual e (sub 8 -> sub 6)
+local function onSlotDrop(self, widget, mousePos)
+    if not window or not window:isVisible() or not shop or tab ~= 'salvage' or busy then return false end
+    local item = widget and widget.currentDragThing
+    if not item or not item.isItem or not item:isItem() then return false end
+    if UIDragIcon and UIDragIcon.hide then UIDragIcon:hide() end
+    local pos = item:getPosition()
+    if not pos or pos.x ~= 65535 then
+        resultText, resultColor = tr('You must carry the item.'), RED
+        refresh()
+        return true
+    end
+    closeBox()
+    send(function(msg) msg:addU8(8); msg:addU16(pos.x); msg:addU16(pos.y); msg:addU8(pos.z) end)
+    return true
+end
+
+function onSalvageDropped(index, text)
+    if not shop or tab ~= 'salvage' or busy then return end
+    local it = (index ~= 255) and shop.salvage[index + 1] or nil
+    if not it then
+        resultText, resultColor = (text ~= '' and text or tr('This item cannot be salvaged.')), RED
+        refresh()
+        return
+    end
+    sel.salvage = it.serial
+    resultText, resultColor, newAttrText = '', '#c0c0c0', nil
+    refresh()
+    -- 27/11 (dono): arrastar so mostra o item; a confirmacao vem no botao Salvage
+end
+
+function action2()
+    if busy or not state or not shop then return end
+    if not child((tab == 'services') and 'voidButton' or 'action2Button'):isEnabled() then return end
+    if tab == 'smelt' then
+        if not channel then startChannel(sel.smelt, 100) end
+    elseif tab == 'services' then
+        local _, it = byKey(shop.services, 'serial', sel.services)
+        if not it then return end
+        local key = sel.services
+        confirm('Void Sigil', tr('Erase every attribute of your %s for %s gold?', titleCase(it.name), fmt(shop.voidFee)), function()
+            if busy or tab ~= 'services' or sel.services ~= key then return end
+            if sendItem(6, shop.services, key) then lastAction = { tab = 'services', void = true }; waitAnswer() end
+        end)
+    end
+end
+
+function showTab(name)
+    if channel then stopChannel() end
+    if busy or not shop then return end
+    if not TAB_ID[name] then return end
+    if SMITH_ONLY[name] and not isMember() then
+        displayInfoBox(tr('Forge Anvil'), tr('Only blacksmiths can use this. Reach blacksmithing %d by salvaging items and join the profession with Brokk in Kazordoon or Sigrun in Edron.', 20))
+        return
+    end
+    closeBox()
+    tab = name
+    selAttr = nil
+    resultText, resultColor, newAttrText = '', '#c0c0c0', nil
+    refresh()
+end
+
+-- compatibilidade com a fase 1 (otui antigo)
+function attune()
+    if tab == 'attune' then action() end
+end
+
+function closeByPlayer()
+    if window and window:isVisible() then
+        send(function(msg) msg:addU8(3) end)
+    end
+    hideWindow()
+end
+
+function refreshView()
+    refresh()
+end
+
+function toggleCatalyst()
+    if busy or not shop or shop.catalysts == 0 then return end
+    useCat = not useCat
+    refresh()
+end
+
+local function hello()
+    send(function(msg) msg:addU8(1); msg:addU8(VERSION) end)
+end
+
+local function setTabIcons()
+    -- desenhos das abas do MORPH (27/11, escolha do dono): images/aba_<aba>.png
+    for _, t in ipairs(TABS) do
+        local w = child(TAB_ID[t])
+        if w then
+            w:getChildById('icon'):setVisible(false)
+            w:getChildById('art'):setImageSource('/game_forge74/images/aba_' .. t)
+        end
+    end
+end
+
+local function onGameStart()
+    hideWindow()
+    state, shop, skills, attuneBars = nil, nil, nil, nil
+    pushSkills()
+    scheduleEvent(hello, 300)
+end
+
+local function onGameEnd()
+    hideWindow()
+    state, shop, skills, attuneBars = nil, nil, nil, nil
+    pushSkills()
+end
+
+function init()
+    -- 26/11 (dono): dentro do painel do jogo (como as mensagens do textmessage). Solta no
+    -- rootWidget, com a janela em foco as teclas do jogo ligadas ao painel (Ctrl+Q/Ctrl+L
+    -- para sair, etc.) nao chegavam nele.
+    window = g_ui.displayUI('forge74', modules.game_interface.getRootPanel())
+    window:hide()
+    setTabIcons()
+    child('salSlot').onDrop = onSlotDrop
+    -- 27/11 (dono): clique direito tira o item do slot (nunca com a confirmacao aberta ou na quebra)
+    child('salSlot').onMouseRelease = function(self, pos, button)
+        if button ~= MouseRightButton then return false end
+        if busy or confirmBox or tab ~= 'salvage' or not sel.salvage then return true end
+        sel.salvage = nil
+        resultText = ''
+        refresh()
+        return true
+    end
+    child('tabBar').onGeometryChange = function() layoutTabs() end
+    ProtocolGame.registerOpcode(OPCODE, onForge)
+    connect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    if g_game.isOnline() then onGameStart() end
+end
+
+function terminate()
+    stopEvents()
+    closeBox()
+    disconnect(g_game, { onGameStart = onGameStart, onGameEnd = onGameEnd })
+    ProtocolGame.unregisterOpcode(OPCODE)
+    if window then window:destroy() end
+    window = nil
+    state, shop = nil, nil
+end
+
+-- so para teste (previa sem servidor): mostra um estado e um resultado falsos
+function _preview(st, sel1, sh, t)
+    stopEvents()
+    busy, pendingState, pendingShop = false, nil, nil
+    state = st
+    shop = sh
+    tab = t or 'attune'
+    sel = { attune = sel1 }
+    resultText, newAttrText = '', nil
+    refresh()
+    window:show()
+end
+
+function _previewSelect(t, key, attr)
+    tab = t
+    sel[t] = key
+    selAttr = attr
+    refresh()
+end
+
+function _previewResult(r, st2, sh2, act)
+    busy = true
+    pendingState = st2
+    pendingShop = sh2
+    lastAction = act or { tab = tab }
+    onResult(r)
+end

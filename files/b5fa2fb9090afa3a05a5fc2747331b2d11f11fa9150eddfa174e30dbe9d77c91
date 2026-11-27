@@ -1,0 +1,10 @@
+Module
+  name: game_store74
+  description: Store do Telmora (Telmora Points, premium, gift e historico; comando 0xEE), no layout da Shop do Miracle
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ store74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()

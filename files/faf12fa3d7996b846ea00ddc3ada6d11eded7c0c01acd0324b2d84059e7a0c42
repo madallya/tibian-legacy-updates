@@ -1,0 +1,30 @@
+// Fileira de botões entre vida/mana e o inventário (como no cliente do Miracle).
+Classic74IconButton < UIButton
+  size: 20 20
+  image-clip: 0 0 20 20
+  $pressed:
+    image-clip: 20 0 20 20
+  $on:
+    image-clip: 20 0 20 20
+
+PhantomMiniWindow
+  id: mainbuttons74
+  draggable: true
+  phantom: false
+  &moveOnlyToMain: false
+  &anyPanel: true
+  &panelHeight: 31
+  height: 31
+
+  // centrada na coluna, 5 px de folga em cima e embaixo
+  UIWidget
+    id: buttons
+    anchors.top: parent.top
+    anchors.horizontalCenter: parent.horizontalCenter
+    margin-top: 5
+    height: 20
+    phantom: true
+    layout:
+      type: horizontalBox
+      spacing: 2
+      fit-children: true

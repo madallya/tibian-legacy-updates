@@ -1,0 +1,10 @@
+Module
+  name: game_forge74
+  description: Forge Anvil do Telmora (comando 0xF8): janela da forja dos Sigils (fase 1, Attune)
+  author: OTServ 7.4
+  website: -
+  sandboxed: true
+  scripts: [ forge74 ]
+  dependencies: [ game_interface ]
+  @onLoad: init()
+  @onUnload: terminate()
